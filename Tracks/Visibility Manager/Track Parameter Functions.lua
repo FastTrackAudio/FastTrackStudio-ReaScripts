@@ -3,47 +3,64 @@
 -- A collection of utility functions for getting and setting track parameters
 
 -- Get all child tracks under a parent track (including nested children)
-function GetChildTracks(parent_track)
+function GetChildTracks(track)
     local child_tracks = {}
+    local original_selection = {}
     
-    -- Store current selection
-    local sel_tracks = {}
-    local sel_count = reaper.CountSelectedTracks(0)
-    for i = 0, sel_count - 1 do
-        table.insert(sel_tracks, reaper.GetSelectedTrack(0, i))
+    -- Store original selection
+    for i = 0, reaper.CountSelectedTracks(0) - 1 do
+        table.insert(original_selection, reaper.GetSelectedTrack(0, i))
     end
     
-    -- Select only the parent track
-    reaper.SetTrackSelected(parent_track, true)
-    for i = 0, reaper.CountTracks(0) - 1 do
-        local track = reaper.GetTrack(0, i)
-        if track ~= parent_track then
-            reaper.SetTrackSelected(track, false)
-        end
-    end
+    -- Select parent track
+    reaper.SetTrackSelected(track, true)
     
     -- Use SWS command to select all children
-    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
+    reaper.Main_OnCommand(reaper.NamedCommandLookup('_SWS_SELCHILDREN2'), 0)
     
-    -- Get all selected tracks (which will be the children)
-    local child_count = reaper.CountSelectedTracks(0)
-    for i = 0, child_count - 1 do
-        local track = reaper.GetSelectedTrack(0, i)
-        if track ~= parent_track then -- Don't include the parent track
-            table.insert(child_tracks, track)
+    -- Get all selected tracks (parent + children)
+    for i = 0, reaper.CountSelectedTracks(0) - 1 do
+        local child = reaper.GetSelectedTrack(0, i)
+        if child ~= track then -- Don't include the parent track
+            table.insert(child_tracks, child)
         end
     end
     
     -- Restore original selection
-    for i = 0, reaper.CountTracks(0) - 1 do
-        local track = reaper.GetTrack(0, i)
-        reaper.SetTrackSelected(track, false)
-    end
-    for _, track in ipairs(sel_tracks) do
+    reaper.SetTrackSelected(track, false)
+    for _, track in ipairs(original_selection) do
         reaper.SetTrackSelected(track, true)
     end
     
     return child_tracks
+end
+
+-- Get all tracks including children for a list of tracks
+function GetAllTracksIncludingChildren(tracks)
+    local all_tracks = {}
+    local processed_tracks = {}
+    
+    local function addTrackAndChildren(track)
+        -- Skip if we've already processed this track
+        if processed_tracks[track] then return end
+        processed_tracks[track] = true
+        
+        -- Add the current track
+        table.insert(all_tracks, track)
+        
+        -- Get and process child tracks
+        local child_tracks = GetChildTracks(track)
+        for _, child in ipairs(child_tracks) do
+            addTrackAndChildren(child)
+        end
+    end
+    
+    -- Process each input track
+    for _, track in ipairs(tracks) do
+        addTrackAndChildren(track)
+    end
+    
+    return all_tracks
 end
 
 -- Get all track parameters in one function

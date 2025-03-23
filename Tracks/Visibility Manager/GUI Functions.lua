@@ -140,119 +140,29 @@ function OpenPopups(i) -- Need This function to be called outside a menu (else i
     end
 end
 
-function SnapshotRightClickPopUp(i) 
-    if reaper.ImGui_BeginPopupContextItem(ctx) then -- use last item id as popup id
-
-        --Overwrite
-        if reaper.ImGui_MenuItem(ctx, 'Overwrite') then
-            OverwriteSnapshot(i)
+function SnapshotRightClickPopUp(i)
+    if reaper.ImGui_BeginPopupContextItem(ctx, "##snapshot" .. i) then
+        if reaper.ImGui_MenuItem(ctx, 'Load Snapshot') then
+            SetSnapshot(i)
         end
-
-        --Load in new Tracks
-        if reaper.ImGui_MenuItem(ctx, 'Load In New Tracks') then
+        if reaper.ImGui_MenuItem(ctx, 'Load Snapshot in New Tracks') then
             SetSnapshotInNewTracks(i)
         end
-
-        --Delete
-        if reaper.ImGui_MenuItem(ctx, 'Delete') then
-            DeleteSnapshot(i)
-            goto endpopup
-        end
-
-        --Rename
-
-        if reaper.ImGui_MenuItem(ctx, 'Rename') then
-            TempRenamePopup = true -- If true open Rename Popup at  OpenPopups(i) --> RenamePopup(i)
-            TempPopup_i = i
-        end
-
-        if reaper.ImGui_MenuItem(ctx, 'Shortcut') then
-            TempLearnPopup = true -- If true open Learn Popup at  OpenPopups(i) --> LearnWindow(i)
-            TempPopup_i = i
-        end
-
-        reaper.ImGui_Separator(ctx)------------------------------------------------------------
-
-        --Select Tracks
-        if reaper.ImGui_MenuItem(ctx, 'Select Snapshot Tracks') then
+        if reaper.ImGui_MenuItem(ctx, 'Select Tracks') then
             SelectSnapshotTracks(i)
         end
-
-        for idx, track in pairs(Snapshot[i].Tracks) do
-            if reaper.ValidatePtr2(0, track, 'MediaTrack*') then
-                local retval, name = reaper.GetTrackName(track)
-                ---------------------------------------------------------------------Tracks Submenu
-                if reaper.ImGui_BeginMenu(ctx, 'Track: '..name..'###'..idx) then
-                    if reaper.ImGui_MenuItem(ctx, 'Load Just This Track Snapshot') then
-                        SetSnapshotForTrack(i,track,true)
-                    end
-
-                    if reaper.ImGui_MenuItem(ctx, 'Load Just This Track Snapshot In a New Track') then
-                        SetSnapshotForTrackInNewTracks(i,track,true)
-                    end
-
-                    reaper.ImGui_Separator(ctx)
-
-                    if reaper.ImGui_MenuItem(ctx, 'Remove Track From Snapshot') then
-                        if not reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_ModShift())then
-                            RemoveTrackFromSnapshot(i, track)
-                        elseif reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_ModShift()) then
-                            RemoveTrackFromSnapshotAll(track)
-                        end
-                    end
-                    if Configs.ToolTips then ToolTip("Remove this track from this Snapshot.  Hold shift to apply to all snapshots that use track: "..name) end
-
-                    
-                    if reaper.ImGui_MenuItem(ctx, 'Substitute This Track With Track Selected') then -- Hold Shift For Substituing in all Snapshots 
-                        SubstituteTrackAll(track)
-                    end
-                    if Configs.ToolTips then ToolTip("Use first selected track as the target when loading this snapshot. Hold shift to apply to all snapshots that use track: "..name) end
-
-
-                    reaper.ImGui_EndMenu(ctx)
-                end
-                ----------------------------------------------------------------------
-            elseif type(track) == "string" then
-                local name = GetChunkVal(Snapshot[i].Chunk[track], 'NAME')
-                if name == '""' then name = 'Unnamed Track '..idx end
-                ChangeColorText(1,1,1,1) -- Red Text
-                ---------------------------------------------------------------------Missed Tracks Submenu
-                if reaper.ImGui_BeginMenu(ctx, 'Track: '..name..'###'..idx) then
-                    reaper.ImGui_PopStyleColor(ctx) -- Pop Red Text
-                    ChangeColorText(0,0,1,1) -- White Text
-
-                    if reaper.ImGui_MenuItem(ctx, 'Substitute This Track With Track Selected') then -- Hold Shift For Substituing in all Snapshots 
-                        SubstituteTrackAll(track)
-                    end
-                    if Configs.ToolTips then ToolTip("Use first selected track as the target when loading this snapshot. Hold shift to apply to all snapshots that use track: "..name) end
-
-
-                    if reaper.ImGui_MenuItem(ctx, 'Create New Track For The Track Missing') then
-                        SubstituteTrackWithNew(i,track)
-                    end
-                    if Configs.ToolTips then ToolTip("Create a new track and use it as the target when loading this Snapshot. Hold shift to apply to all snapshots that use track: "..name) end
-
-
-                    if reaper.ImGui_MenuItem(ctx, 'Remove Track From Snapshot') then
-                        if not reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_ModShift()) then
-                            RemoveTrackFromSnapshot(i, track)
-                        elseif reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_ModShift()) then
-                            RemoveTrackFromSnapshotAll(track)
-                        end
-                    end
-
-                    reaper.ImGui_Separator(ctx)
-
-                    if reaper.ImGui_MenuItem(ctx, 'Load Just This Track Snapshot In a New Track') then
-                        SetSnapshotForTrackInNewTracks(i,track,true)
-                    end
-                    reaper.ImGui_EndMenu(ctx)
-                end
-                reaper.ImGui_PopStyleColor(ctx) -- Pop White Text
+        if reaper.ImGui_MenuItem(ctx, 'Rename') then
+            TempRenamePopup = true
+            TempPopup_i = i
+        end
+        if reaper.ImGui_MenuItem(ctx, 'Delete') then
+            DeleteSnapshot(i)
+        end
+        if Snapshot[i].MissTrack then
+            if reaper.ImGui_MenuItem(ctx, 'Show Missing Tracks') then
+                ShowMissingTracks(i)
             end
         end
-
-        ::endpopup::
         reaper.ImGui_EndPopup(ctx)
     end
 end
@@ -468,63 +378,99 @@ end
 
 function ConfigsMenu()
     if reaper.ImGui_BeginMenu(ctx, 'Configs') then
-
-        if reaper.ImGui_MenuItem(ctx, 'Only Show Selected Tracks Snapshots',"", not Configs.ShowAll) then
+        if reaper.ImGui_MenuItem(ctx, 'Show All Snapshots') then
             Configs.ShowAll = not Configs.ShowAll
             SaveConfig()
         end
-
-        if not Configs.VersionMode then
-            if reaper.ImGui_MenuItem(ctx, 'Highlight Last Loaded Snapshot',"", Configs.Select) then
-                Configs.Select = not Configs.Select
-                SaveConfig()
-            end
-        end
-
-        if reaper.ImGui_MenuItem(ctx, 'Track Version Mode',"", Configs.VersionMode) then
-            Configs.VersionMode = not Configs.VersionMode
+        if reaper.ImGui_MenuItem(ctx, 'Prevent Shortcuts') then
+            Configs.PreventShortcut = not Configs.PreventShortcut
             SaveConfig()
         end
-
-        if reaper.ImGui_MenuItem(ctx, 'Delete Automation Items When Saving Snapshots',"", Configs.AutoDeleteAI) then
+        if reaper.ImGui_MenuItem(ctx, 'Show ToolTips') then
+            Configs.ToolTips = not Configs.ToolTips
+            SaveConfig()
+        end
+        if reaper.ImGui_MenuItem(ctx, 'Prompt Name') then
+            Configs.PromptName = not Configs.PromptName
+            SaveConfig()
+        end
+        if reaper.ImGui_MenuItem(ctx, 'Auto Delete AI') then
             Configs.AutoDeleteAI = not Configs.AutoDeleteAI
             SaveConfig()
         end
+        if reaper.ImGui_MenuItem(ctx, 'Show Last Snapshot Loaded') then
+            Configs.Select = not Configs.Select
+            SaveConfig()
+        end
+        if reaper.ImGui_MenuItem(ctx, 'Version Mode') then
+            Configs.VersionMode = not Configs.VersionMode
+            SaveConfig()
+        end
+        if reaper.ImGui_MenuItem(ctx, 'Exclusive Mode', nil, Configs.ExclusiveMode) then
+            Configs.ExclusiveMode = not Configs.ExclusiveMode
+            SaveConfig()
+        end
+        reaper.ImGui_Separator(ctx)
         
-        reaper.ImGui_Separator(ctx)
-
-        if reaper.ImGui_MenuItem(ctx, 'Prevent Snapshot Shortcuts',"",  Configs.PreventShortcut) then
-            Configs.PreventShortcut = not  Configs.PreventShortcut
-            SaveConfig()
-        end
-
-        if reaper.ImGui_MenuItem(ctx, 'Prompt Snapshot Name When Saving',"",  Configs.PromptName) then
-            Configs.PromptName = not  Configs.PromptName
-            SaveConfig()
+        -- Group Management
+        if reaper.ImGui_BeginMenu(ctx, 'Groups') then
+            -- Create New Group
+            if reaper.ImGui_MenuItem(ctx, 'Create New Group') then
+                TempPopup_i = 'NewGroup'
+            end
+            
+            -- Delete All Groups option
+            if reaper.ImGui_MenuItem(ctx, 'Delete All Groups') then
+                if reaper.ShowMessageBox("This will delete all groups (except Default) and their snapshots. This action cannot be undone. Continue?", "Delete All Groups", 4) == 6 then
+                    DeleteAllGroups()
+                end
+            end
+            
+            -- List existing groups
+            if Configs.Groups then
+                reaper.ImGui_Separator(ctx)
+                for _, group in ipairs(Configs.Groups) do
+                    -- Ensure subGroups exists
+                    if not group.subGroups then
+                        group.subGroups = {
+                            TCP = {},
+                            MCP = {}
+                        }
+                    end
+                    
+                    local isSelected = Configs.CurrentGroup == group.name
+                    if reaper.ImGui_MenuItem(ctx, group.name, isSelected and "✓" or "") then
+                        Configs.CurrentGroup = group.name
+                        Configs.CurrentSubGroup = "TCP" -- Reset sub-group when changing groups
+                        SaveConfig()
+                    end
+                    
+                    -- Add delete option for each group
+                    if reaper.ImGui_SmallButton(ctx, "X##" .. group.name) then
+                        DeleteGroup(group.name)
+                    end
+                    
+                    -- Show sub-groups if this is the current group
+                    if isSelected then
+                        reaper.ImGui_Indent(ctx, 20)
+                        for subGroupName, _ in pairs(group.subGroups) do
+                            local isSubSelected = Configs.CurrentSubGroup == subGroupName
+                            if reaper.ImGui_MenuItem(ctx, subGroupName, isSubSelected and "✓" or "") then
+                                Configs.CurrentSubGroup = subGroupName
+                                SaveConfig()
+                            end
+                        end
+                        reaper.ImGui_Unindent(ctx, 20)
+                    end
+                end
+            end
+            
+            reaper.ImGui_EndMenu(ctx)
         end
         
-        if Configs.ToolTips then ToolTip('(DEFAULT AND RECOMMENDED)\nThis remove all automation items preserving the points before saving the snapshot\nThis create an Undo Point!') end
-
-
-        reaper.ImGui_Separator(ctx)
-
-        if reaper.ImGui_MenuItem(ctx, 'Show Tooltips',"",  Configs.ToolTips) then
-            Configs.ToolTips = not  Configs.ToolTips
-            SaveConfig()
-        end
-
-        reaper.ImGui_Separator(ctx)
-
         if reaper.ImGui_MenuItem(ctx, 'Refresh Configs') then
             RefreshConfigs()
         end
-
-        --Delete All
-        if reaper.ImGui_MenuItem(ctx, 'Delete All Snapshots') then
-            Snapshot = {}
-            SaveSnapshotConfig()
-        end
-
         reaper.ImGui_EndMenu(ctx)
     end
 end
@@ -558,6 +504,83 @@ function DockBtn()
         else -- Not docked
             SetDock = -3 -- Dock to the right 
         end
+    end
+end
+
+-- Add new popup for creating groups
+function NewGroupPopup()
+    if TempNewGroupPopup then
+        BeginForcePreventShortcuts()
+        reaper.ImGui_OpenPopup(ctx, "New Group")
+        TempNewGroupPopup = nil
+    end
+
+    local popup_name = "New Group"
+    local popup_flags = reaper.ImGui_WindowFlags_AlwaysAutoResize()
+    reaper.ImGui_SetNextWindowSize(ctx, 300, 200, reaper.ImGui_Cond_FirstUseEver())
+    local visible, open = reaper.ImGui_BeginPopupModal(ctx, popup_name, popup_flags)
+    
+    if visible then
+        reaper.ImGui_Text(ctx, "Enter group name:")
+        reaper.ImGui_PushItemWidth(ctx, 280)
+        local rv, temp = reaper.ImGui_InputText(ctx, "##newgroupname", TempNewGroupName or "")
+        if rv then TempNewGroupName = temp end
+        reaper.ImGui_PopItemWidth(ctx)
+        
+        -- Get the selected track's name and show it in muted text
+        local selectedTrack = reaper.GetSelectedTrack(0, 0)
+        local trackName = "No track selected"
+        if selectedTrack then
+            _, trackName = reaper.GetTrackName(selectedTrack)
+        end
+        
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)  -- Muted gray color
+        reaper.ImGui_Text(ctx, "Parent Track: " .. trackName)
+        reaper.ImGui_PopStyleColor(ctx)
+        
+        reaper.ImGui_Separator(ctx)
+        
+        -- Center the buttons
+        local buttonWidth = 100
+        local windowWidth = reaper.ImGui_GetWindowWidth(ctx)
+        local centerX = (windowWidth - (buttonWidth * 2 + 10)) / 2  -- 10 is spacing between buttons
+        reaper.ImGui_SetCursorPosX(ctx, centerX)
+        
+        if reaper.ImGui_Button(ctx, "Create", buttonWidth) then
+            if TempNewGroupName and TempNewGroupName ~= '' then
+                local success, message = CreateGroup(TempNewGroupName)
+                if success then
+                    TempNewGroupName = nil
+                    CloseForcePreventShortcuts()
+                    reaper.ImGui_CloseCurrentPopup(ctx)
+                else
+                    print(message)
+                end
+            end
+        end
+        
+        reaper.ImGui_SameLine(ctx)
+        if reaper.ImGui_Button(ctx, "Cancel", buttonWidth) then
+            TempNewGroupName = nil
+            CloseForcePreventShortcuts()
+            reaper.ImGui_CloseCurrentPopup(ctx)
+        end
+        
+        -- Handle Enter key
+        if reaper.ImGui_IsKeyPressed(ctx, 13) then  -- 13 is the key code for Enter
+            if TempNewGroupName and TempNewGroupName ~= '' then
+                local success, message = CreateGroup(TempNewGroupName)
+                if success then
+                    TempNewGroupName = nil
+                    CloseForcePreventShortcuts()
+                    reaper.ImGui_CloseCurrentPopup(ctx)
+                else
+                    print(message)
+                end
+            end
+        end
+        
+        reaper.ImGui_EndPopup(ctx)
     end
 end
 

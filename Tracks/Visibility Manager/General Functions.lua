@@ -128,11 +128,15 @@ function TableValuesCompareNoOrder(table1,table2)
     return equal
 end
 
-function GetTrackByGUID(GUID) -- 
-    local master = reaper.GetMasterTrack(0)
-    if  GUID == reaper.GetTrackGUID( master ) then return master end
-    local  track =  reaper.BR_GetMediaTrackByGUID( 0, GUID ) -- Faster than iterating all tracks but dont get master
-    return track
+function GetTrackByGUID(guid)
+    if type(guid) == 'userdata' then
+        -- If it's already a MediaTrack pointer, return it
+        return guid
+    elseif type(guid) == 'string' then
+        -- If it's a GUID string, get the track
+        return reaper.BR_GetMediaTrackByGUID(0, guid)
+    end
+    return nil
 end
 
 function UnselectAllAutomationItemsInProject()

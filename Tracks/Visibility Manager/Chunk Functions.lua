@@ -232,8 +232,10 @@ function SwapChunkValueSpecific(chunk1, chunk2, key, indices)
                 values2[index] = values1[index]
             end
             
-            -- Reconstruct the line
+            -- Reconstruct the line with escaped special characters
             local new_line = key .. " " .. table.concat(values2, " ")
+            -- Escape special characters in the replacement string
+            new_line = new_line:gsub("[%%]", "%%%%")
             chunk2 = chunk2:gsub(key .. " [^\n]+", new_line)
         else
             -- If line exists in chunk1 but not in chunk2, add it after TRACK
