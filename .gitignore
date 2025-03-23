@@ -1,0 +1,25 @@
+# REAPER specific
+*.RPP
+*.RPP-bak
+*.RPP-undo
+*.RPP-peaks
+*.RPP-meta
+
+# Lua specific
+*.lua~
+*.luac
+*.lua.bak
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# IDE specific
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Logs
+*.log 

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json",
+  "Lua.diagnostics.globals": ["reaper", "reaper.ImGui_*",
+        "script_path",
+        "configs_filename",
+        "loop",
+        "ctx",
+        "font_mini"],
+  "Lua.workspace.library": ["reaimgui.lua"],
+    "diagnostics.disable": [
+        "undefined-field",
+        "undefined-global",
+        "missing-parameter",
+        "return-type-mismatch",
+        "need-check-nil",
+        "cast-local-type"
+    ]
+}
