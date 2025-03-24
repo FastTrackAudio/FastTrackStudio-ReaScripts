@@ -759,7 +759,7 @@ function LoadConfigs()
         for i, item in ipairs(VisOptions) do
             if not Configs.Chunk.Vis.Options[i] then
                 Configs.Chunk.Vis.Options[i] = {
-                    Bool = false,
+                    Bool = true,
                     Name = item[1],
                     ChunkKey = item[2],
                     ValueIndices = item[3],
@@ -1420,4 +1420,54 @@ function GetFilteredConfig(filterType)
     end
     
     return filteredConfig
+end
+
+function SaveSnapshot(data)
+    -- Create a new snapshot with the provided data
+    local newSnapshot = {
+        Name = data.name,
+        Group = data.group,
+        SubGroup = data.subgroup,
+        icon = "",  -- Default empty icon
+        Tracks = {}  -- Will store track visibility states
+    }
+
+    -- Get all tracks in the project
+    local numTracks = reaper.CountTracks(0)
+    for i = 0, numTracks - 1 do
+        local track = reaper.GetTrack(0, i)
+        if track then
+            local visibility = {
+                TCP = reaper.GetMediaTrackInfo_Value(track, "B_SHOWINTCP"),
+                MCP = reaper.GetMediaTrackInfo_Value(track, "B_SHOWINMIXER")
+            }
+            -- Only save the state we're interested in (TCP or MCP)
+            if data.subgroup == "TCP" and visibility.TCP == 1 or
+               data.subgroup == "MCP" and visibility.MCP == 1 then
+                local guid = reaper.GetTrackGUID(track)
+                table.insert(newSnapshot.Tracks, {
+                    GUID = guid,
+                    TCP = data.subgroup == "TCP" and visibility.TCP or nil,
+                    MCP = data.subgroup == "MCP" and visibility.MCP or nil
+                })
+            end
+        end
+    end
+
+    -- Add the new snapshot to the Snapshot table
+    table.insert(Snapshot, newSnapshot)
+    SaveSnapshotConfig()  -- Save to disk
+
+    -- Update the group's selected snapshot
+    for _, group in ipairs(Configs.Groups) do
+        if group.name == data.group then
+            if data.subgroup == "TCP" then
+                group.selectedTCP = data.name
+            else
+                group.selectedMCP = data.name
+            end
+            break
+        end
+    end
+    SaveConfig()  -- Save group configuration
 end

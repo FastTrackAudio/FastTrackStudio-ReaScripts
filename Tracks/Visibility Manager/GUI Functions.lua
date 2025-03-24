@@ -265,33 +265,33 @@ function GuiLoadChunkOption()
             end
             reaper.ImGui_PopStyleColor(ctx)
 
-            if reaper.ImGui_Checkbox(ctx, 'Track Envelopes', Configs.Chunk.Env.Bool) then
-                Configs.Chunk.Env.Bool = not Configs.Chunk.Env.Bool
-                SaveConfig() 
-            end
+            -- if reaper.ImGui_Checkbox(ctx, 'Track Envelopes', Configs.Chunk.Env.Bool) then
+            --     Configs.Chunk.Env.Bool = not Configs.Chunk.Env.Bool
+            --     SaveConfig() 
+            -- end
 
-            -- Right Click Track Envelopes
-            reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x464646FF)
-            if reaper.ImGui_BeginPopupContextItem(ctx) then
-                for i, value in pairs(Configs.Chunk.Env.Envelope) do
-                    if reaper.ImGui_Checkbox(ctx, Configs.Chunk.Env.Envelope[i].Name, Configs.Chunk.Env.Envelope[i].Bool) then
-                        Configs.Chunk.Env.Envelope[i].Bool = not Configs.Chunk.Env.Envelope[i].Bool
-                        SaveConfig()
-                    end
-                end
-                reaper.ImGui_EndPopup(ctx)
-            end
-            reaper.ImGui_PopStyleColor(ctx)
+            -- -- Right Click Track Envelopes
+            -- reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_PopupBg(), 0x464646FF)
+            -- if reaper.ImGui_BeginPopupContextItem(ctx) then
+            --     for i, value in pairs(Configs.Chunk.Env.Envelope) do
+            --         if reaper.ImGui_Checkbox(ctx, Configs.Chunk.Env.Envelope[i].Name, Configs.Chunk.Env.Envelope[i].Bool) then
+            --             Configs.Chunk.Env.Envelope[i].Bool = not Configs.Chunk.Env.Envelope[i].Bool
+            --             SaveConfig()
+            --         end
+            --     end
+            --     reaper.ImGui_EndPopup(ctx)
+            -- end
+            -- reaper.ImGui_PopStyleColor(ctx)
 
-            if reaper.ImGui_Checkbox(ctx, 'Sends', Configs.Chunk.Sends) then
-                Configs.Chunk.Sends = not Configs.Chunk.Sends
-                SaveConfig() 
-            end
+            -- if reaper.ImGui_Checkbox(ctx, 'Sends', Configs.Chunk.Sends) then
+            --     Configs.Chunk.Sends = not Configs.Chunk.Sends
+            --     SaveConfig() 
+            -- end
 
-            if reaper.ImGui_Checkbox(ctx, 'Receives', Configs.Chunk.Receive) then
-                Configs.Chunk.Receive = not Configs.Chunk.Receive
-                SaveConfig() 
-            end
+            -- if reaper.ImGui_Checkbox(ctx, 'Receives', Configs.Chunk.Receive) then
+            --     Configs.Chunk.Receive = not Configs.Chunk.Receive
+            --     SaveConfig() 
+            -- end
 
             if Configs.ToolTips then ToolTip("Right Click For More Options") end
 
@@ -581,6 +581,218 @@ function NewGroupPopup()
         end
         
         reaper.ImGui_EndPopup(ctx)
+    end
+end
+
+-- Global variables for icon selector
+local ICON_SELECTOR = {
+    isOpen = false,
+    searchText = "",
+    currentTarget = nil,
+    icons = {},
+    categories = {},
+    selectedCategory = "All Icons",
+    iconSize = 32,
+    windowSize = {500, 500},
+    colors = {
+        winBg = 0x282828ff,
+        sidebarCol = 0x2c2c2cff,
+        hoverCol = 0x3c6191ff,
+        outlineCol = 0xffcb40ff,
+        textActive = 0xf1f2f2ff,
+        textInactive = 0x999B9Fff
+    }
+}
+
+-- Global icon cache
+local ICON_CACHE = {}
+
+-- Function to load and cache icons
+function LoadIcon(path)
+    if not path or path == "" then return nil end
+    
+    -- Initialize cache if needed
+    if not ICON_CACHE then ICON_CACHE = {} end
+    
+    -- Check if icon is already cached and valid
+    if ICON_CACHE[path] then
+        if reaper.ImGui_ValidatePtr(ICON_CACHE[path], 'ImGui_Image*') then
+            return ICON_CACHE[path]
+        else
+            -- Remove invalid cached icon
+            ICON_CACHE[path] = nil
+        end
+    end
+    
+    -- Load new icon
+    local success, icon = pcall(reaper.ImGui_CreateImage, path)
+    if success and icon and reaper.ImGui_ValidatePtr(icon, 'ImGui_Image*') then
+        ICON_CACHE[path] = icon
+        return icon
+    end
+    
+    return nil
+end
+
+function SafeDrawIcon(icon, x, y, size)
+    if not icon then return false end
+    
+    -- Validate icon pointer
+    if not reaper.ImGui_ValidatePtr(icon, 'ImGui_Image*') then
+        return false
+    end
+    
+    -- Safely draw the icon
+    local success, _ = pcall(function()
+        local drawList = reaper.ImGui_GetWindowDrawList(ctx)
+        reaper.ImGui_DrawList_AddImage(drawList, icon, x, y, x + size, y + size)
+    end)
+    
+    return success
+end
+
+function SafeImageButton(label, icon, size_x, size_y)
+    if not icon or not reaper.ImGui_ValidatePtr(icon, 'ImGui_Image*') then
+        return false
+    end
+    
+    local success, clicked = pcall(reaper.ImGui_ImageButton, ctx, label, icon, size_x, size_y)
+    return success and clicked or false
+end
+
+function LoadIcons()
+    if #ICON_SELECTOR.icons == 0 then
+        local reaper_path = reaper.GetResourcePath()
+        local icons_path = reaper_path .. "/Data/track_icons"
+        ICON_SELECTOR.icons = {}
+        ICON_SELECTOR.categories = {["All Icons"] = {}}
+        
+        -- Function to scan directory recursively
+        local function scanDirectory(path, category)
+            for i = 0, math.huge do
+                local file = reaper.EnumerateFiles(path, i)
+                if not file then break end
+                if file:match("%.png$") or file:match("%.jpg$") or file:match("%.jpeg$") then
+                    local fullPath = path .. "/" .. file
+                    local icon = {
+                        path = fullPath,
+                        name = file,
+                        texture = reaper.ImGui_CreateImage(fullPath)
+                    }
+                    table.insert(ICON_SELECTOR.icons, icon)
+                    table.insert(ICON_SELECTOR.categories["All Icons"], icon)
+                    if category then
+                        if not ICON_SELECTOR.categories[category] then
+                            ICON_SELECTOR.categories[category] = {}
+                        end
+                        table.insert(ICON_SELECTOR.categories[category], icon)
+                    end
+                end
+            end
+            
+            -- Scan subdirectories
+            for i = 0, math.huge do
+                local dir = reaper.EnumerateSubdirectories(path, i)
+                if not dir then break end
+                scanDirectory(path .. "/" .. dir, dir)
+            end
+        end
+        
+        scanDirectory(icons_path)
+    end
+end
+
+function OpenIconSelector(target)
+    ICON_SELECTOR.isOpen = true
+    ICON_SELECTOR.currentTarget = target
+    ICON_SELECTOR.searchText = ""
+    LoadIcons()
+end
+
+function IconSelectorPopup()
+    if not ICON_SELECTOR.isOpen then return end
+    
+    reaper.ImGui_SetNextWindowSize(ctx, ICON_SELECTOR.windowSize[1], ICON_SELECTOR.windowSize[2], reaper.ImGui_Cond_FirstUseEver())
+    local visible, open = reaper.ImGui_Begin(ctx, 'Icon Selector##popup', true, reaper.ImGui_WindowFlags_NoCollapse())
+    ICON_SELECTOR.isOpen = open
+    
+    if visible then
+        -- Left sidebar with categories
+        reaper.ImGui_BeginChild(ctx, "Categories", 150, 0, true)
+        for category in pairs(ICON_SELECTOR.categories) do
+            if reaper.ImGui_Selectable(ctx, category, ICON_SELECTOR.selectedCategory == category) then
+                ICON_SELECTOR.selectedCategory = category
+            end
+        end
+        reaper.ImGui_EndChild(ctx)
+        
+        reaper.ImGui_SameLine(ctx)
+        
+        -- Right panel with search and icons
+        reaper.ImGui_BeginChild(ctx, "Icons", 0, 0, true)
+        
+        -- Search bar
+        local changed, newText = reaper.ImGui_InputText(ctx, "Search", ICON_SELECTOR.searchText)
+        if changed then
+            ICON_SELECTOR.searchText = newText
+        end
+        
+        -- Icons grid
+        local availWidth = reaper.ImGui_GetContentRegionAvail(ctx)
+        local iconsPerRow = math.floor(availWidth / (ICON_SELECTOR.iconSize + 8))
+        if iconsPerRow < 1 then iconsPerRow = 1 end
+        
+        reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_ItemSpacing(), 8, 8)
+        
+        local currentCategory = ICON_SELECTOR.categories[ICON_SELECTOR.selectedCategory] or {}
+        for i, icon in ipairs(currentCategory) do
+            if ICON_SELECTOR.searchText == "" or icon.name:lower():find(ICON_SELECTOR.searchText:lower()) then
+                if i > 1 then
+                    local col = (i - 1) % iconsPerRow
+                    if col > 0 then reaper.ImGui_SameLine(ctx) end
+                end
+                
+                if SafeImageButton("##" .. icon.path, icon.texture, ICON_SELECTOR.iconSize, ICON_SELECTOR.iconSize) then
+                    if ICON_SELECTOR.currentTarget then
+                        ICON_SELECTOR.currentTarget.icon = icon.path
+                        SaveConfig()
+                    end
+                    ICON_SELECTOR.isOpen = false
+                end
+                
+                if reaper.ImGui_IsItemHovered(ctx) then
+                    reaper.ImGui_BeginTooltip(ctx)
+                    reaper.ImGui_Text(ctx, icon.name)
+                    reaper.ImGui_EndTooltip(ctx)
+                end
+            end
+        end
+        
+        reaper.ImGui_PopStyleVar(ctx)
+        reaper.ImGui_EndChild(ctx)
+    end
+    reaper.ImGui_End(ctx)
+end
+
+-- Global variables for color picker
+local COLOR_PICKER = {
+    currentTarget = nil,
+    currentColor = 0x4444FFFF  -- Default blue color
+}
+
+function OpenColorPicker(target)
+    COLOR_PICKER.currentTarget = target
+    COLOR_PICKER.currentColor = target.color or 0x4444FFFF
+end
+
+function ColorPickerPopup()
+    if not COLOR_PICKER.currentTarget then return end
+    
+    -- Color picker directly in the context menu
+    local changed, newColor = reaper.ImGui_ColorEdit4(ctx, "##color_picker", COLOR_PICKER.currentColor, reaper.ImGui_ColorEditFlags_AlphaBar())
+    if changed then
+        COLOR_PICKER.currentTarget.color = newColor
+        SaveConfig()
     end
 end
 
