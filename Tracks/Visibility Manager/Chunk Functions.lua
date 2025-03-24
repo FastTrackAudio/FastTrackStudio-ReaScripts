@@ -160,6 +160,48 @@ function SwapChunkSection(key,chunk1,chunk2) -- Move Section (key) of chunk1 to 
     return new_chunk
 end
 
+function HandleChunkValue(value, key)
+    if key == "LAYOUTS" then
+        -- Split the value into MCP and TCP parts, treating quoted values as single units
+        local mcp, tcp = value:match('([^ ]+) ([^ ]+)')
+        if not mcp or not tcp then
+            return value
+        end
+        
+        -- Handle MCP value
+        if mcp == "" or mcp:match("^[A-Z]$") then
+            mcp = mcp
+        else
+            -- If it's already quoted, just use it as is
+            if mcp:match('^".*"$') then
+                mcp = mcp
+            else
+                -- Otherwise add quotes
+                mcp = '"' .. mcp .. '"'
+            end
+        end
+        
+        -- Handle TCP value
+        if tcp == "" or tcp:match("^[A-Z]$") then
+            tcp = tcp
+        else
+            -- If it's already quoted, just use it as is
+            if tcp:match('^".*"$') then
+                tcp = tcp
+            else
+                -- Otherwise add quotes
+                tcp = '"' .. tcp .. '"'
+            end
+        end
+        
+        -- If either value is empty, return without quotes
+        if mcp == "" then mcp = "" end
+        if tcp == "" then tcp = "" end
+        
+        return mcp .. " " .. tcp
+    end
+    return value
+end
 
 function SwapChunkValue(key, chunk1, chunk2)
     local line1 = chunk1:match(key .. " ([^\n]+)")
@@ -190,8 +232,8 @@ function SwapChunkValue(key, chunk1, chunk2)
                 values2[1] = values1[1]
                 values2[2] = values1[2]
                 
-                -- Reconstruct the line
-                local new_line = key .. " " .. table.concat(values2, " ")
+                -- Reconstruct the line with proper handling of special characters
+                local new_line = key .. " " .. HandleChunkValue(table.concat(values2, " "), key)
                 chunk2 = chunk2:gsub(key .. " [^\n]+", new_line)
             else
                 chunk2 = chunk2:gsub(key .. " [^\n]+", key .. " " .. line1)
@@ -205,6 +247,7 @@ function SwapChunkValue(key, chunk1, chunk2)
                     -- as REAPER will use the default layout when the line is missing
                     return chunk2
                 end
+                line1 = HandleChunkValue(line1, key)
                 chunk2 = chunk2:gsub("<TRACK", "<TRACK\n" .. key .. " " .. line1)
             else
                 -- For other keys, just add it at the end of the TRACK section
@@ -215,34 +258,74 @@ function SwapChunkValue(key, chunk1, chunk2)
     return chunk2
 end
 
-function SwapChunkValueSpecific(chunk1, chunk2, key, indices)
-    local line1 = chunk1:match(key .. " ([^\n]+)")
-    local line2 = chunk2:match(key .. " ([^\n]+)")
+function SwapChunkValueSpecific(sourceChunk, targetChunk, key, indices)
+    print("\n=== SwapChunkValueSpecific Debug ===")
+    print("Key:", key)
+    print("Indices:", table.concat(indices, ", "))
     
-    if line1 then
-        if line2 then
-            -- Split both lines into values
-            local values1 = {}
-            local values2 = {}
-            for v in line1:gmatch("%S+") do table.insert(values1, v) end
-            for v in line2:gmatch("%S+") do table.insert(values2, v) end
-            
-            -- Update only the specified indices
-            for _, index in ipairs(indices) do
-                values2[index] = values1[index]
+    local sourceValue = sourceChunk:match(key .. " ([^\n]+)")
+    local targetValue = targetChunk:match(key .. " ([^\n]+)")
+    
+    print("\nSource Value:", sourceValue)
+    print("Target Value:", targetValue)
+    
+    if sourceValue then
+        if targetValue then
+            -- For LAYOUTS, we need to handle the values differently
+            if key == "LAYOUTS" then
+                -- Split into TCP and MCP parts by matching first value and taking rest
+                local tcp, mcp = sourceValue:match('([^ ]+)%s+(.+)')
+                local targetTcp, targetMcp = targetValue:match('([^ ]+)%s+(.+)')
+                
+                print("\nSplit Values:")
+                print("Source TCP:", tcp)
+                print("Source MCP:", mcp)
+                print("Target TCP:", targetTcp)
+                print("Target MCP:", targetMcp)
+                
+                -- Update only the specified indices, preserving the exact format
+                if indices[1] == 1 then  -- TCP is first (1)
+                    targetTcp = tcp
+                    print("\nUpdating TCP value to:", targetTcp)
+                end
+                if indices[1] == 2 then  -- MCP is second (2)
+                    targetMcp = mcp
+                    print("\nUpdating MCP value to:", targetMcp)
+                end
+                
+                -- Reconstruct the line with the exact values
+                local newValue = targetTcp .. " " .. targetMcp
+                print("\nNew Value:", newValue)
+                
+                -- Escape % characters in the replacement string
+                newValue = newValue:gsub("%%", "%%%%")
+                targetChunk = targetChunk:gsub(key .. " [^\n]+", key .. " " .. newValue)
+            else
+                -- For other keys, use the existing logic
+                local sourceValues = {}
+                local targetValues = {}
+                for v in sourceValue:gmatch("%S+") do table.insert(sourceValues, v) end
+                for v in targetValue:gmatch("%S+") do table.insert(targetValues, v) end
+                
+                -- Update specified indices
+                for _, index in ipairs(indices) do
+                    if sourceValues[index] and targetValues[index] then
+                        targetValues[index] = sourceValues[index]
+                    end
+                end
+                
+                -- Reconstruct the line
+                local newValue = table.concat(targetValues, " ")
+                targetChunk = targetChunk:gsub(key .. " [^\n]+", key .. " " .. newValue)
             end
-            
-            -- Reconstruct the line with escaped special characters
-            local new_line = key .. " " .. table.concat(values2, " ")
-            -- Escape special characters in the replacement string
-            new_line = new_line:gsub("[%%]", "%%%%")
-            chunk2 = chunk2:gsub(key .. " [^\n]+", new_line)
         else
-            -- If line exists in chunk1 but not in chunk2, add it after TRACK
-            chunk2 = chunk2:gsub("<TRACK", "<TRACK\n" .. key .. " " .. line1)
+            -- If the line doesn't exist in target, add it after TRACK
+            targetChunk = targetChunk:gsub("<TRACK", "<TRACK\n" .. key .. " " .. sourceValue)
         end
     end
-    return chunk2
+    
+    print("\n=== End SwapChunkValueSpecific Debug ===\n")
+    return targetChunk
 end
 
 function AddSectionToChunk(chunk, section_chunk) -- Track Chunks
