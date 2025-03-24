@@ -224,6 +224,22 @@ function loop()
 						group.color = 0x4444FFFF  -- Reset to default blue
 						SaveConfig()
 					end
+					reaper.ImGui_Separator(ctx)
+					if reaper.ImGui_MenuItem(ctx, 'Delete Group') then
+						if reaper.ShowMessageBox("Are you sure you want to delete the group '" .. group.name .. "' and all its snapshots?", "Delete Group", 4) == 6 then
+							DeleteGroup(group.name)
+							-- Delete associated snapshots
+							local i = 1
+							while i <= #Snapshot do
+								if Snapshot[i].Group == group.name then
+									table.remove(Snapshot, i)
+								else
+									i = i + 1
+								end
+							end
+							SaveSnapshotConfig()
+						end
+					end
 					reaper.ImGui_EndPopup(ctx)
 				end
 				
