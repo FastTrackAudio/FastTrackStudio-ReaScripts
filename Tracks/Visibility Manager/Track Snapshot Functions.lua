@@ -86,7 +86,14 @@ function SaveSnapshot() -- Set Snapshot table, Save State
     Snapshot[i].MissTrack = false
     Snapshot[i].Visible = true 
     SoloSelect(i) --set Snapshot[i].Selected
-    Snapshot[i].Name = 'New Snapshot '..i
+    
+    -- Use TempNewSnapshotName if it exists, otherwise use default name
+    if TempNewSnapshotName and TempNewSnapshotName ~= "" then
+        Snapshot[i].Name = TempNewSnapshotName
+    else
+        Snapshot[i].Name = 'New Snapshot '..i
+    end
+    
     SaveSend(i) -- set Snapshot[i].Sends[SnapshotSendTrackGUID] = {RTrack = ReceiveGUID, Chunk = 'ChunkLine'},...} -- table each item is a track it sends 
     SaveReceive(i)
 
@@ -1344,7 +1351,7 @@ function DeleteAllGroups()
     SaveConfig()
 end
 
--- New function to save TCP-specific snapshot
+-- Function to save TCP-specific snapshot
 function SaveTCPSnapshot()
     local sel_tracks = SaveSelectedTracks()
     if #sel_tracks == 0 then
@@ -1372,8 +1379,8 @@ function SaveTCPSnapshot()
     Snapshot[i] = {}
     Snapshot[i].Tracks = all_tracks
     Snapshot[i].Group = Configs.CurrentGroup
-    Snapshot[i].SubGroup = "TCP"
-    Snapshot[i].Mode = "TCP"
+    Snapshot[i].SubGroup = "TCP"  -- Mark as TCP snapshot
+    Snapshot[i].Mode = "ALL"      -- Save all data
 
     -- Set Chunk in Snapshot[i][track]
     Snapshot[i].Chunk = {} 
@@ -1382,10 +1389,9 @@ function SaveTCPSnapshot()
         local _, track_name = reaper.GetTrackName(track)
         print("Saving track: " .. track_name)
         
-        local retval, chunk = reaper.GetTrackStateChunk( track, '', false )
+        local retval, chunk = reaper.GetTrackStateChunk(track, '', false)
         if retval then
-            -- Filter chunk to only include TCP-specific data
-            chunk = FilterChunkByType(chunk, "TCP")
+            -- Save complete chunk
             Snapshot[i].Chunk[track] = chunk
         end
     end
@@ -1398,9 +1404,83 @@ function SaveTCPSnapshot()
     Snapshot[i].MissTrack = false
     Snapshot[i].Visible = true 
     SoloSelect(i)
-    Snapshot[i].Name = 'New TCP Snapshot '..i
+    
+    -- Use TempNewSnapshotName if it exists, otherwise use default name
+    if TempNewSnapshotName and TempNewSnapshotName ~= "" then
+        Snapshot[i].Name = TempNewSnapshotName
+    else
+        Snapshot[i].Name = 'New TCP Snapshot '..i
+    end
 
     -- Always prompt for name for TCP snapshots
+    TempRenamePopup = true
+    TempPopup_i = i
+    
+    SaveSnapshotConfig()
+end
+
+-- Function to save MCP-specific snapshot
+function SaveMCPSnapshot()
+    local sel_tracks = SaveSelectedTracks()
+    if #sel_tracks == 0 then
+        print('👨< Please Select Some Tracks ❤️)') 
+        return 
+    end
+    
+    -- Save current selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
+    
+    -- Select all tracks in the folder structure
+    for _, track in pairs(sel_tracks) do
+        reaper.SetTrackSelected(track, true)
+        reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
+    end
+    
+    -- Get all selected tracks (including children)
+    local all_tracks = {}
+    for i = 0, reaper.CountSelectedTracks(0) - 1 do
+        local track = reaper.GetSelectedTrack(0, i)
+        table.insert(all_tracks, track)
+    end
+    
+    local i = #Snapshot+1
+    Snapshot[i] = {}
+    Snapshot[i].Tracks = all_tracks
+    Snapshot[i].Group = Configs.CurrentGroup
+    Snapshot[i].SubGroup = "MCP"  -- Mark as MCP snapshot
+    Snapshot[i].Mode = "ALL"      -- Save all data
+
+    -- Set Chunk in Snapshot[i][track]
+    Snapshot[i].Chunk = {} 
+    print("\n=== Saving MCP Snapshot ===")
+    for k , track in pairs(Snapshot[i].Tracks) do
+        local _, track_name = reaper.GetTrackName(track)
+        print("Saving track: " .. track_name)
+        
+        local retval, chunk = reaper.GetTrackStateChunk(track, '', false)
+        if retval then
+            -- Save complete chunk
+            Snapshot[i].Chunk[track] = chunk
+        end
+    end
+    print("Total tracks saved: " .. #Snapshot[i].Tracks)
+    print("=== End Saving MCP Snapshot ===\n")
+
+    -- Restore original selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
+
+    Snapshot[i].MissTrack = false
+    Snapshot[i].Visible = true 
+    SoloSelect(i)
+    
+    -- Use TempNewSnapshotName if it exists, otherwise use default name
+    if TempNewSnapshotName and TempNewSnapshotName ~= "" then
+        Snapshot[i].Name = TempNewSnapshotName
+    else
+        Snapshot[i].Name = 'New MCP Snapshot '..i
+    end
+
+    -- Always prompt for name for MCP snapshots
     TempRenamePopup = true
     TempPopup_i = i
     

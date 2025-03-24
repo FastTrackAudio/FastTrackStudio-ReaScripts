@@ -581,7 +581,6 @@ function loop()
 		OpenPopups(TempPopup_i)
 		NewGroupPopup()
 		IconSelectorPopup()
-		ColorPickerPopup()
 		--------
 		reaper.ImGui_End(ctx)
 	end
@@ -626,9 +625,16 @@ function NewSnapshotNamePopup()
 		
 		if reaper.ImGui_Button(ctx, 'Save', 120, 0) or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Enter()) then
 			if TempNewSnapshotName ~= "" then
-				-- Save the snapshot with the custom name
-				TempPopupData.name = TempNewSnapshotName
-				SaveSnapshot(TempPopupData)
+				-- Set the current group to the one from TempPopupData
+				Configs.CurrentGroup = TempPopupData.group
+				
+				-- Call the appropriate snapshot function based on subgroup
+				if TempPopupData.subgroup == "TCP" then
+					SaveTCPSnapshot()
+				else
+					SaveMCPSnapshot()
+				end
+				
 				CloseForcePreventShortcuts()
 				TempPopup_i = nil
 				reaper.ImGui_CloseCurrentPopup(ctx)
