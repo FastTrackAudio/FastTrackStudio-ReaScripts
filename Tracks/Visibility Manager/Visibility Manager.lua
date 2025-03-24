@@ -46,6 +46,7 @@ dofile(reaper.GetResourcePath() .. "/Scripts/ReaTeam Extensions/API/imgui.lua")(
 --- configs
 Configs = {}
 Configs.ShowAll = false
+Configs.ViewMode = "Toggle" -- Can be "Toggle", "Exclusive", or "LimitedExclusive"
 
 function GuiInit()
 	ctx = reaper.ImGui_CreateContext("Track Snapshot", reaper.ImGui_ConfigFlags_DockingEnable())
@@ -225,6 +226,17 @@ function loop()
 						SaveConfig()
 					end
 					reaper.ImGui_Separator(ctx)
+					
+					-- Add new menu item for adding selected tracks to group scope
+					if reaper.ImGui_MenuItem(ctx, "Add Selected Tracks to Group Scope") then
+						local numAdded = AddSelectedTracksToGroupScope(group.name)
+						if numAdded > 0 then
+							print(string.format("\nAdded %d track(s) to group scope for '%s'", numAdded, group.name))
+						else
+							print("\nNo new tracks were added to group scope")
+						end
+					end
+					
 					if reaper.ImGui_MenuItem(ctx, 'Delete Group') then
 						if reaper.ShowMessageBox("Are you sure you want to delete the group '" .. group.name .. "' and all its snapshots?", "Delete Group", 4) == 6 then
 							DeleteGroup(group.name)
@@ -690,6 +702,164 @@ function CloseForcePreventShortcuts()
 	Configs.PreventShortcut = TempPreventShortCut
 	TempPreventShortCut = nil
 	PreventPassKeys = nil
+end
+
+function ConfigsMenu()
+	if reaper.ImGui_BeginMenu(ctx, 'Configs') then
+		if reaper.ImGui_MenuItem(ctx, 'Show All Snapshots') then
+			Configs.ShowAll = not Configs.ShowAll
+			SaveConfig()
+		end
+		if reaper.ImGui_MenuItem(ctx, 'Prevent Shortcuts') then
+			Configs.PreventShortcut = not Configs.PreventShortcut
+			SaveConfig()
+		end
+		if reaper.ImGui_MenuItem(ctx, 'Show ToolTips') then
+			Configs.ToolTips = not Configs.ToolTips
+			SaveConfig()
+		end
+		if reaper.ImGui_MenuItem(ctx, 'Prompt Name') then
+			Configs.PromptName = not Configs.PromptName
+			SaveConfig()
+		end
+		if reaper.ImGui_MenuItem(ctx, 'Auto Delete AI') then
+			Configs.AutoDeleteAI = not Configs.AutoDeleteAI
+			SaveConfig()
+		end
+		if reaper.ImGui_MenuItem(ctx, 'Show Last Snapshot Loaded') then
+			Configs.Select = not Configs.Select
+			SaveConfig()
+		end
+		if reaper.ImGui_MenuItem(ctx, 'Version Mode') then
+			Configs.VersionMode = not Configs.VersionMode
+			SaveConfig()
+		end
+		reaper.ImGui_Separator(ctx)
+		
+		-- View Mode submenu
+		if reaper.ImGui_BeginMenu(ctx, 'View Mode') then
+			if reaper.ImGui_MenuItem(ctx, 'Toggle Mode', nil, Configs.ViewMode == "Toggle") then
+				Configs.ViewMode = "Toggle"
+				SaveConfig()
+			end
+			if reaper.ImGui_MenuItem(ctx, 'Exclusive Mode', nil, Configs.ViewMode == "Exclusive") then
+				Configs.ViewMode = "Exclusive"
+				SaveConfig()
+			end
+			if reaper.ImGui_MenuItem(ctx, 'Limited Exclusive Mode', nil, Configs.ViewMode == "LimitedExclusive") then
+				Configs.ViewMode = "LimitedExclusive"
+				SaveConfig()
+			end
+			reaper.ImGui_EndMenu(ctx)
+		end
+		
+		reaper.ImGui_Separator(ctx)
+		if reaper.ImGui_MenuItem(ctx, 'Delete All Groups') then
+			if reaper.ShowMessageBox("This will delete all groups (except Default) and their snapshots. This action cannot be undone. Continue?", "Delete All Groups", 4) == 6 then
+				DeleteAllGroups()
+			end
+		end
+		if reaper.ImGui_MenuItem(ctx, 'Refresh Configs') then
+			RefreshConfigs()
+		end
+		reaper.ImGui_EndMenu(ctx)
+	end
+end
+
+function HandleGroupActivation(group)
+	print("\n=== HandleGroupActivation Debug ===")
+	print("Group:", group.name)
+	print("Active:", group.active)
+	print("View Mode:", Configs.ViewMode)
+	
+	-- Save current track selection state ONCE at the start
+	reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
+	
+	-- Always hide tracks when deactivating a group
+	if not group.active then
+		print("Deactivating group - hiding all tracks in scope")
+		HideGroupTracks(group)
+		-- Restore original selection and refresh layouts
+		reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
+		reaper.ThemeLayout_RefreshAll()
+		print("=== End HandleGroupActivation Debug ===\n")
+		return
+	end
+	
+	-- Handle activation based on view mode
+	if Configs.ViewMode == "Toggle" then
+		-- Show tracks and apply snapshots
+		ShowGroupTracks(group)
+		ApplyGroupSnapshots(group)
+	elseif Configs.ViewMode == "Exclusive" then
+		-- Hide all tracks first
+		HideAllTracks()
+		-- Deactivate all other groups
+		for _, otherGroup in ipairs(Configs.Groups) do
+			if otherGroup ~= group then
+				otherGroup.active = false
+			end
+		end
+		-- Show tracks and apply snapshots for active group
+		ShowGroupTracks(group)
+		ApplyGroupSnapshots(group)
+	elseif Configs.ViewMode == "LimitedExclusive" then
+		-- Deactivate all other groups
+		for _, otherGroup in ipairs(Configs.Groups) do
+			if otherGroup ~= group then
+				otherGroup.active = false
+			end
+		end
+		
+		-- Set all tracks to minimum height
+		local allTracks = {}
+		for i = 0, reaper.CountTracks(0) - 1 do
+			table.insert(allTracks, reaper.GetTrack(0, i))
+		end
+		ShowTracksMinimumHeight(allTracks)
+		
+		-- Collapse all top-level tracks
+		CollapseTopLevelTracks()
+		
+		-- Get the parent track of the group
+		local parentTrack = GetParentTrackOfGroup(group)
+		if parentTrack then
+			print("Found group parent track")
+			
+			-- Get all parent tracks of the parent track
+			local parentTracks = GetParentTracks(parentTrack)
+			print("Found", #parentTracks, "additional parent tracks")
+			
+			-- Unfold all parent tracks in the hierarchy
+			for _, track in ipairs(parentTracks) do
+				local _, track_name = reaper.GetTrackName(track)
+				print("Unfolding parent track:", track_name)
+				reaper.SetMediaTrackInfo_Value(track, "I_FOLDERCOMPACT", 0)  -- 0 = unfolded
+			end
+			
+			-- Also unfold the immediate parent track
+			print("Unfolding immediate parent track")
+			reaper.SetMediaTrackInfo_Value(parentTrack, "I_FOLDERCOMPACT", 0)
+			
+			-- Deselect all tracks and select only the parent
+			reaper.Main_OnCommand(40297, 0) -- Track: Unselect all tracks
+			reaper.SetTrackSelected(parentTrack, true)
+			
+			-- Scroll MCP and TCP to show the parent track
+			reaper.Main_OnCommand(reaper.NamedCommandLookup("_RS7fb3d74a01cfeae229ad75b83192ca5086acbdbd"), 0) -- Scroll MCP to first selected track
+			reaper.Main_OnCommand(reaper.NamedCommandLookup("_RS9d2de0644134078c900c5baf59a2e900f1fe0c55"), 0) -- Scroll TCP vertically to first selected track
+		end
+		
+		-- Apply snapshots to the active group
+		ApplyGroupSnapshots(group)
+	end
+	
+	-- Restore original track selection ONCE at the end
+	reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
+	
+	-- Force REAPER to refresh all layouts
+	reaper.ThemeLayout_RefreshAll()
+	print("=== End HandleGroupActivation Debug ===\n")
 end
 
 Init()
