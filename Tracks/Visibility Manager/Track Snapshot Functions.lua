@@ -191,7 +191,7 @@ function OverwriteSnapshot(snapshotName)
             local track = GetTrackByGUID(guid)
             if track then
                 reaper.SetTrackSelected(track, true)
-                table.insert(all_tracks, track)
+        table.insert(all_tracks, track)
                 
                 -- If this track is a parent track, also select its children
                 local depth = reaper.GetTrackDepth(track)
@@ -828,8 +828,8 @@ function LoadSnapshot()
                 if type(track) == 'string' and not snapshot.MissTrack then 
                     snapshot.MissTrack = true
                 end 
-            end
         end
+    end
         
         -- Ensure chunk data exists
         if not snapshot.Chunk then
@@ -2473,7 +2473,7 @@ function SaveSnapshot(data)
 
     -- Add the new snapshot to the Snapshot table
     table.insert(Snapshot, newSnapshot)
-    
+
     -- Update the group's selected snapshot and subGroups
     for _, group in ipairs(Configs.Groups) do
         if group.name == data.group then

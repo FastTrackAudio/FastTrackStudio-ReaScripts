@@ -661,24 +661,26 @@ function SafeImageButton(label, icon, size_x, size_y)
 end
 
 function LoadIcons()
-    if #ICON_SELECTOR.icons == 0 then
-        local reaper_path = reaper.GetResourcePath()
-        local icons_path = reaper_path .. "/Data/track_icons"
-        ICON_SELECTOR.icons = {}
-        ICON_SELECTOR.categories = {["All Icons"] = {}}
-        
-        -- Function to scan directory recursively
-        local function scanDirectory(path, category)
-            for i = 0, math.huge do
-                local file = reaper.EnumerateFiles(path, i)
-                if not file then break end
-                if file:match("%.png$") or file:match("%.jpg$") or file:match("%.jpeg$") then
-                    local fullPath = path .. "/" .. file
-                    local icon = {
-                        path = fullPath,
-                        name = file,
-                        texture = reaper.ImGui_CreateImage(fullPath)
-                    }
+    -- Always reload icons when the function is called
+    ICON_SELECTOR.icons = {}
+    ICON_SELECTOR.categories = {["All Icons"] = {}}
+    
+    local reaper_path = reaper.GetResourcePath()
+    local icons_path = reaper_path .. "/Data/track_icons"
+    
+    -- Function to scan directory recursively
+    local function scanDirectory(path, category)
+        for i = 0, math.huge do
+            local file = reaper.EnumerateFiles(path, i)
+            if not file then break end
+            if file:match("%.png$") or file:match("%.jpg$") or file:match("%.jpeg$") then
+                local fullPath = path .. "/" .. file
+                local icon = {
+                    path = fullPath,
+                    name = file,
+                    texture = LoadIcon(fullPath) -- Use LoadIcon instead of direct CreateImage
+                }
+                if icon.texture then -- Only add if icon loaded successfully
                     table.insert(ICON_SELECTOR.icons, icon)
                     table.insert(ICON_SELECTOR.categories["All Icons"], icon)
                     if category then
@@ -689,20 +691,36 @@ function LoadIcons()
                     end
                 end
             end
-            
-            -- Scan subdirectories
-            for i = 0, math.huge do
-                local dir = reaper.EnumerateSubdirectories(path, i)
-                if not dir then break end
-                scanDirectory(path .. "/" .. dir, dir)
-            end
         end
         
-        scanDirectory(icons_path)
+        -- Scan subdirectories
+        for i = 0, math.huge do
+            local dir = reaper.EnumerateSubdirectories(path, i)
+            if not dir then break end
+            scanDirectory(path .. "/" .. dir, dir)
+        end
     end
+    
+    scanDirectory(icons_path)
+end
+
+-- Function to clear icon cache and reset zoom state
+function ResetIconSelector()
+    -- Clear icon cache
+    ICON_CACHE = {}
+    
+    -- Reset zoom state
+    ICON_SELECTOR.iconSize = 32
+    
+    -- Clear loaded icons to force reload
+    ICON_SELECTOR.icons = {}
+    ICON_SELECTOR.categories = {["All Icons"] = {}}
 end
 
 function OpenIconSelector(target)
+    -- Reset cache and zoom state
+    ResetIconSelector()
+    
     ICON_SELECTOR.isOpen = true
     ICON_SELECTOR.currentTarget = target
     ICON_SELECTOR.searchText = ""
@@ -712,6 +730,7 @@ end
 function IconSelectorPopup()
     if not ICON_SELECTOR.isOpen then return end
     
+    -- Set window size and position
     reaper.ImGui_SetNextWindowSize(ctx, ICON_SELECTOR.windowSize[1], ICON_SELECTOR.windowSize[2], reaper.ImGui_Cond_FirstUseEver())
     local visible, open = reaper.ImGui_Begin(ctx, 'Icon Selector##popup', true, reaper.ImGui_WindowFlags_NoCollapse())
     ICON_SELECTOR.isOpen = open
@@ -737,10 +756,16 @@ function IconSelectorPopup()
             ICON_SELECTOR.searchText = newText
         end
         
-        -- Icons grid
+        -- Icons grid with zoom control
         local availWidth = reaper.ImGui_GetContentRegionAvail(ctx)
         local iconsPerRow = math.floor(availWidth / (ICON_SELECTOR.iconSize + 8))
         if iconsPerRow < 1 then iconsPerRow = 1 end
+        
+        -- Add zoom slider
+        local zoomChanged, newZoom = reaper.ImGui_SliderInt(ctx, "Zoom", ICON_SELECTOR.iconSize, 16, 64, "%d")
+        if zoomChanged then
+            ICON_SELECTOR.iconSize = newZoom
+        end
         
         reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_ItemSpacing(), 8, 8)
         
