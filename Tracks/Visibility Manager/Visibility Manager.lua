@@ -329,9 +329,6 @@ function loop()
 					for _, item in ipairs(tcpSnapshots) do
 						local snapshot = item.snapshot
 						local label = snapshot.Name
-						if snapshot.Mode then
-							label = label .. " (" .. snapshot.Mode .. ")"
-						end
 						
 						-- Draw snapshot with icon if it exists
 						if snapshot.icon and snapshot.icon ~= "" then
@@ -503,9 +500,6 @@ function loop()
 					for _, item in ipairs(mcpSnapshots) do
 						local snapshot = item.snapshot
 						local label = snapshot.Name
-						if snapshot.Mode then
-							label = label .. " (" .. snapshot.Mode .. ")"
-						end
 						
 						-- Draw snapshot with icon if it exists
 						if snapshot.icon and snapshot.icon ~= "" then

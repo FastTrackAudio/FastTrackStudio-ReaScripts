@@ -54,7 +54,6 @@ function SaveSnapshot() -- Set Snapshot table, Save State
     Snapshot[i].Tracks = all_tracks
     Snapshot[i].Group = Configs.CurrentGroup
     Snapshot[i].SubGroup = TempPopupData.subgroup or "TCP"
-    Snapshot[i].Mode = "ALL"
     
     -- Set Chunk in Snapshot[i][track]
     Snapshot[i].Chunk = {}
@@ -773,9 +772,7 @@ function LoadSnapshot()
         if not snapshot.SubGroup then
             snapshot.SubGroup = "TCP"  -- Default to TCP if missing
         end
-        if not snapshot.Mode then
-            snapshot.Mode = "ALL"  -- Default to ALL if missing
-        end
+        -- Removed default Mode setting
         
         -- Check for missing tracks
         if snapshot.Tracks then
@@ -1640,6 +1637,15 @@ function ApplyGroupSnapshots(group)
                 if tcpChunk then
                     print("\nApplying TCP changes for track:", reaper.GetTrackName(track))
                     newChunk = ChunkSwap(tcpChunk, newChunk, "TCP")
+                    
+                    -- Apply height lock state from TCP snapshot
+                    local trackData = tcpSnapshot.Tracks[track]
+                    if trackData and trackData.HeightLock then
+                        reaper.SetMediaTrackInfo_Value(track, "B_HEIGHTLOCK", trackData.HeightLock)
+                        if trackData.HeightOverride then
+                            reaper.SetMediaTrackInfo_Value(track, "I_HEIGHTOVERRIDE", trackData.HeightOverride)
+                        end
+                    end
                 end
                 
                 -- Apply MCP changes if available
@@ -2363,7 +2369,7 @@ function SaveSnapshot(data)
     
     -- Create a new snapshot with the provided data
     local newSnapshot = {
-        Name = data.name,
+        Name = data.name:gsub("%s+%(ALL%)$", ""), -- Remove (ALL) suffix if present
         Group = data.group,
         SubGroup = data.subgroup,
         icon = "",  -- Default empty icon
@@ -2383,10 +2389,16 @@ function SaveSnapshot(data)
             if data.subgroup == "TCP" and visibility.TCP == 1 or
                data.subgroup == "MCP" and visibility.MCP == 1 then
                 local guid = reaper.GetTrackGUID(track)
+                -- Get height lock state
+                local heightLock = reaper.GetMediaTrackInfo_Value(track, "B_HEIGHTLOCK")
+                local heightOverride = reaper.GetMediaTrackInfo_Value(track, "I_HEIGHTOVERRIDE")
+                
                 table.insert(newSnapshot.Tracks, {
                     GUID = guid,
                     TCP = data.subgroup == "TCP" and visibility.TCP or nil,
-                    MCP = data.subgroup == "MCP" and visibility.MCP or nil
+                    MCP = data.subgroup == "MCP" and visibility.MCP or nil,
+                    HeightLock = heightLock,
+                    HeightOverride = heightOverride
                 })
             end
         end
@@ -2399,17 +2411,17 @@ function SaveSnapshot(data)
     for _, group in ipairs(Configs.Groups) do
         if group.name == data.group then
             if data.subgroup == "TCP" then
-                group.selectedTCP = data.name
+                group.selectedTCP = newSnapshot.Name
                 if not group.subGroups then
                     group.subGroups = { TCP = {}, MCP = {} }
                 end
-                table.insert(group.subGroups.TCP, data.name)
+                table.insert(group.subGroups.TCP, newSnapshot.Name)
             else
-                group.selectedMCP = data.name
+                group.selectedMCP = newSnapshot.Name
                 if not group.subGroups then
                     group.subGroups = { TCP = {}, MCP = {} }
                 end
-                table.insert(group.subGroups.MCP, data.name)
+                table.insert(group.subGroups.MCP, newSnapshot.Name)
             end
             break
         end
