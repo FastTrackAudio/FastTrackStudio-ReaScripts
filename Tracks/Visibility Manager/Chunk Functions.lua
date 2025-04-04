@@ -281,12 +281,8 @@ end
 function SwapChunkValueSpecific(sourceChunk, targetChunk, key, indices)
     local start_time = reaper.time_precise()
 
-   
-    
     local sourceValue = sourceChunk:match(key .. " ([^\n]+)")
     local targetValue = targetChunk:match(key .. " ([^\n]+)")
-    
-   
     
     if sourceValue then
         if targetValue then
@@ -296,21 +292,16 @@ function SwapChunkValueSpecific(sourceChunk, targetChunk, key, indices)
                 local tcp, mcp = sourceValue:match('([^ ]+)%s+(.+)')
                 local targetTcp, targetMcp = targetValue:match('([^ ]+)%s+(.+)')
                 
-               
-                
                 -- Update only the specified indices, preserving the exact format
                 if indices[1] == 1 then  -- TCP is first (1)
                     targetTcp = tcp
-                   
                 end
                 if indices[1] == 2 then  -- MCP is second (2)
                     targetMcp = mcp
-                   
                 end
                 
                 -- Reconstruct the line with the exact values
                 local newValue = targetTcp .. " " .. targetMcp
-               
                 
                 -- Escape % characters in the replacement string
                 newValue = newValue:gsub("%%", "%%%%")
@@ -338,9 +329,8 @@ function SwapChunkValueSpecific(sourceChunk, targetChunk, key, indices)
             targetChunk = targetChunk:gsub("<TRACK", "<TRACK\n" .. key .. " " .. sourceValue)
         end
     end
-    
 
-    DebugTime("SwapChunkValueSpecific", start_time)
+    DebugPrint(string.format("[SwapChunkValueSpecific] took %.3f ms", (reaper.time_precise() - start_time) * 1000))
     return targetChunk
 end
 

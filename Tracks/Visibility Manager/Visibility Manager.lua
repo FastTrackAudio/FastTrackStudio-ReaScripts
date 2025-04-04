@@ -237,6 +237,46 @@ function loop()
 						end
 					end
 					
+					-- Add Move Up/Down options
+					reaper.ImGui_Separator(ctx)
+					
+					-- Find the current group index
+					local currentIndex = 1
+					for i, g in ipairs(Configs.Groups) do
+						if g.name == group.name then
+							currentIndex = i
+							break
+						end
+					end
+					
+					-- Move Up option (disabled if already at the top)
+					if currentIndex > 1 then
+						if reaper.ImGui_MenuItem(ctx, "Move Up") then
+							-- Swap with the group above
+							Configs.Groups[currentIndex], Configs.Groups[currentIndex-1] = Configs.Groups[currentIndex-1], Configs.Groups[currentIndex]
+							SaveConfig()
+						end
+					else
+						reaper.ImGui_BeginDisabled(ctx)
+						reaper.ImGui_MenuItem(ctx, "Move Up")
+						reaper.ImGui_EndDisabled(ctx)
+					end
+					
+					-- Move Down option (disabled if already at the bottom)
+					if currentIndex < #Configs.Groups then
+						if reaper.ImGui_MenuItem(ctx, "Move Down") then
+							-- Swap with the group below
+							Configs.Groups[currentIndex], Configs.Groups[currentIndex+1] = Configs.Groups[currentIndex+1], Configs.Groups[currentIndex]
+							SaveConfig()
+						end
+					else
+						reaper.ImGui_BeginDisabled(ctx)
+						reaper.ImGui_MenuItem(ctx, "Move Down")
+						reaper.ImGui_EndDisabled(ctx)
+					end
+					
+					reaper.ImGui_Separator(ctx)
+					
 					if reaper.ImGui_MenuItem(ctx, 'Delete Group') then
 						if reaper.ShowMessageBox("Are you sure you want to delete the group '" .. group.name .. "' and all its snapshots?", "Delete Group", 4) == 6 then
 							DeleteGroup(group.name)
@@ -256,8 +296,43 @@ function loop()
 				end
 				
 				if isClicked then
-					group.active = not group.active
-					HandleGroupActivation(group)
+					-- Check if shift is held down
+					local isShiftHeld = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_LeftShift()) or reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_RightShift())
+					
+					if isShiftHeld then
+						-- If shift is held, force exclusive mode regardless of config
+						-- First deactivate all groups
+						for _, otherGroup in ipairs(Configs.Groups) do
+							if otherGroup ~= group then
+								otherGroup.active = false
+							end
+						end
+						
+						-- If the group was already active, deactivate it first
+						if group.active then
+							group.active = false
+							HandleGroupActivation(group)
+						end
+						
+						-- Then activate the clicked group
+						group.active = true
+						
+						-- Temporarily save the current view mode
+						local originalViewMode = Configs.ViewMode
+						
+						-- Force exclusive mode for this activation
+						Configs.ViewMode = "Exclusive"
+						
+						-- Activate the group with exclusive mode
+						HandleGroupActivation(group)
+						
+						-- Restore the original view mode
+						Configs.ViewMode = originalViewMode
+					else
+						-- Normal toggle behavior
+						group.active = not group.active
+						HandleGroupActivation(group)
+					end
 					SaveConfig()
 				end
 				reaper.ImGui_EndGroup(ctx)
@@ -769,7 +844,7 @@ function ConfigsMenu()
 end
 
 function HandleGroupActivation(group)
-	print("\n=== HandleGroupActivation Debug ===")
+	DebugPrint("\n=== HandleGroupActivation Debug ===")
 	local start_time = reaper.time_precise()
 	
 	-- Prevent UI updates and undo points for the entire operation
@@ -790,10 +865,10 @@ function HandleGroupActivation(group)
 	if not group.active then
 		local hide_start = reaper.time_precise()
 		HideGroupTracks(group)
-		print(string.format("HideGroupTracks took %.3f ms", (reaper.time_precise() - hide_start) * 1000))
+		DebugPrint(string.format("HideGroupTracks took %.3f ms", (reaper.time_precise() - hide_start) * 1000))
 		
-		print(string.format("Total deactivation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
-		print("=== End HandleGroupActivation Debug ===\n")
+		DebugPrint(string.format("Total deactivation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
+		DebugPrint("=== End HandleGroupActivation Debug ===\n")
 		return
 	end
 	
@@ -802,12 +877,12 @@ function HandleGroupActivation(group)
 		-- Show tracks
 		local show_start = reaper.time_precise()
 		ShowGroupTracks(group)
-		print(string.format("ShowGroupTracks took %.3f ms", (reaper.time_precise() - show_start) * 1000))
+		DebugPrint(string.format("ShowGroupTracks took %.3f ms", (reaper.time_precise() - show_start) * 1000))
 	elseif Configs.ViewMode == "Exclusive" then
 		-- Hide all tracks first
 		local hide_start = reaper.time_precise()
 		HideAllTracks()
-		print(string.format("HideAllTracks took %.3f ms", (reaper.time_precise() - hide_start) * 1000))
+		DebugPrint(string.format("HideAllTracks took %.3f ms", (reaper.time_precise() - hide_start) * 1000))
 		
 		-- Deactivate all other groups
 		for _, otherGroup in ipairs(Configs.Groups) do
@@ -819,7 +894,7 @@ function HandleGroupActivation(group)
 		-- Show tracks for active group
 		local show_start = reaper.time_precise()
 		ShowGroupTracks(group)
-		print(string.format("ShowGroupTracks took %.3f ms", (reaper.time_precise() - show_start) * 1000))
+		DebugPrint(string.format("ShowGroupTracks took %.3f ms", (reaper.time_precise() - show_start) * 1000))
 	elseif Configs.ViewMode == "LimitedExclusive" then
 		-- Deactivate all other groups
 		for _, otherGroup in ipairs(Configs.Groups) do
@@ -835,29 +910,29 @@ function HandleGroupActivation(group)
 			table.insert(allTracks, reaper.GetTrack(0, i))
 		end
 		ShowTracksMinimumHeight(allTracks)
-		print(string.format("ShowTracksMinimumHeight took %.3f ms", (reaper.time_precise() - height_start) * 1000))
+		DebugPrint(string.format("ShowTracksMinimumHeight took %.3f ms", (reaper.time_precise() - height_start) * 1000))
 		
 		-- Collapse all top-level tracks
 		local collapse_start = reaper.time_precise()
 		CollapseTopLevelTracks()
-		print(string.format("CollapseTopLevelTracks took %.3f ms", (reaper.time_precise() - collapse_start) * 1000))
+		DebugPrint(string.format("CollapseTopLevelTracks took %.3f ms", (reaper.time_precise() - collapse_start) * 1000))
 		
 		-- Get the parent track of the group
 		if parentTrack then
-			print("Found group parent track")
+			DebugPrint("Found group parent track")
 			
 			-- Get all parent tracks of the parent track
-			print("Found", #parentTracks, "additional parent tracks")
+			DebugPrint("Found", #parentTracks, "additional parent tracks")
 			
 			-- Unfold all parent tracks in the hierarchy
 			for _, track in ipairs(parentTracks) do
 				local _, track_name = reaper.GetTrackName(track)
-				print("Unfolding parent track:", track_name)
+				DebugPrint("Unfolding parent track:", track_name)
 				reaper.SetMediaTrackInfo_Value(track, "I_FOLDERCOMPACT", 0)  -- 0 = unfolded
 			end
 			
 			-- Also unfold the immediate parent track
-			print("Unfolding immediate parent track")
+			DebugPrint("Unfolding immediate parent track")
 			reaper.SetMediaTrackInfo_Value(parentTrack, "I_FOLDERCOMPACT", 0)
 			
 			-- Deselect all tracks and select only the parent
@@ -873,7 +948,7 @@ function HandleGroupActivation(group)
 	-- Apply snapshots only once at the end, after all track operations are complete
 	local snapshot_start = reaper.time_precise()
 	ApplyGroupSnapshots(group)
-	print(string.format("ApplyGroupSnapshots took %.3f ms", (reaper.time_precise() - snapshot_start) * 1000))
+	DebugPrint(string.format("ApplyGroupSnapshots took %.3f ms", (reaper.time_precise() - snapshot_start) * 1000))
 	
 	-- Restore original track selection ONCE at the end
 	reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
@@ -881,8 +956,8 @@ function HandleGroupActivation(group)
 	-- Force REAPER to refresh all layouts
 	reaper.ThemeLayout_RefreshAll()
 	
-	print(string.format("Total activation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
-	print("=== End HandleGroupActivation Debug ===\n")
+	DebugPrint(string.format("Total activation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
+	DebugPrint("=== End HandleGroupActivation Debug ===\n")
 end
 
 Init()
