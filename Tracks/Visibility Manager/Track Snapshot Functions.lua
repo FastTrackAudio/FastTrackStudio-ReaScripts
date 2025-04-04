@@ -24,43 +24,29 @@ function SaveSnapshot() -- Set Snapshot table, Save State
     -- Save current selection
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
     
-    -- First, deselect all tracks
-    reaper.Main_OnCommand(40297, 0) -- Track: Unselect all tracks
+    -- Get all tracks in the group without modifying their state
+    local all_tracks = {}
     
-    -- Select the parent track and all its children
-    reaper.SetTrackSelected(parentTrack, true)
-    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
+    -- Add parent track
+    table.insert(all_tracks, parentTrack)
     
-    -- Add additional tracks from the group's scope
+    -- Add all children of the parent track
+    local childCount = reaper.CountTrackMediaItems(parentTrack)
+    for i = 0, childCount - 1 do
+        local childTrack = reaper.GetTrackMediaItem_Track(reaper.GetTrackMediaItem(parentTrack, i))
+        if childTrack and childTrack ~= parentTrack then
+            table.insert(all_tracks, childTrack)
+        end
+    end
+    
+    -- Add any additional tracks from the group's scope
     if group.additionalTracks then
         for _, guid in ipairs(group.additionalTracks) do
             local track = GetTrackByGUID(guid)
             if track then
-                reaper.SetTrackSelected(track, true)
-                
-                -- If this track is a parent track, also select its children
-                local depth = reaper.GetTrackDepth(track)
-                if depth >= 0 then
-                    -- Save current selection
-                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
-                    
-                    -- Select just this track and its children
-                    reaper.Main_OnCommand(40297, 0) -- Unselect all tracks
-                    reaper.SetTrackSelected(track, true)
-                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
-                    
-                    -- Merge with previous selection
-                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
-                end
+                table.insert(all_tracks, track)
             end
         end
-    end
-    
-    -- Get all selected tracks (including children and additional tracks)
-    local all_tracks = {}
-    for i = 0, reaper.CountSelectedTracks(0) - 1 do
-        local track = reaper.GetSelectedTrack(0, i)
-        table.insert(all_tracks, track)
     end
     
     local i = #Snapshot+1
@@ -77,7 +63,6 @@ function SaveSnapshot() -- Set Snapshot table, Save State
         local _, track_name = reaper.GetTrackName(track)
         print("\nSaving track: " .. track_name)
         
-        AutomationItemsPreferences(track) 
         local retval, chunk = reaper.GetTrackStateChunk(track, '', false)
         if retval then
             -- Get current layouts from the track using BR_GetMediaTrackLayouts
@@ -179,41 +164,59 @@ function OverwriteSnapshot(snapshotName)
     -- Save current selection
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
     
-    -- Select the parent track and all its children
-    reaper.SetTrackSelected(parentTrack, true)
-    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
-    
-    -- Get all selected tracks (including children)
+    -- Get all tracks in the group without modifying their state
     local all_tracks = {}
-    for i = 0, reaper.CountSelectedTracks(0) - 1 do
-        local track = reaper.GetSelectedTrack(0, i)
-        table.insert(all_tracks, track)
+    
+    -- Add parent track
+    table.insert(all_tracks, parentTrack)
+    
+    -- Add all children of the parent track
+    local childCount = reaper.CountTrackMediaItems(parentTrack)
+    for i = 0, childCount - 1 do
+        local childTrack = reaper.GetTrackMediaItem_Track(reaper.GetTrackMediaItem(parentTrack, i))
+        if childTrack and childTrack ~= parentTrack then
+            table.insert(all_tracks, childTrack)
+        end
     end
     
-    -- Update the snapshot with new tracks and chunks
+    -- Add any additional tracks from the group's scope
+    if group.additionalTracks then
+        for _, trackGUID in ipairs(group.additionalTracks) do
+            local track = GetTrackByGUID(trackGUID)
+            if track then
+        table.insert(all_tracks, track)
+            end
+        end
+    end
+    
+    -- Update the snapshot with current track states
     Snapshot[snapshotIndex].Tracks = all_tracks
     Snapshot[snapshotIndex].Chunk = {}
     
-    print("\n=== Updating Snapshot Content ===")
-    for k, track in pairs(Snapshot[snapshotIndex].Tracks) do
+    print("\n=== Saving Tracks to Snapshot ===")
+    for k, track in pairs(all_tracks) do
         local _, track_name = reaper.GetTrackName(track)
-        print("Updating track: " .. track_name)
+        print("Saving track:", track_name)
         
-        AutomationItemsPreferences(track)
         local retval, chunk = reaper.GetTrackStateChunk(track, '', false)
         if retval then
             Snapshot[snapshotIndex].Chunk[track] = chunk
         end
     end
-    print("Total tracks updated: " .. #Snapshot[snapshotIndex].Tracks)
-    print("=== End Updating Snapshot Content ===\n")
+    print("Total tracks saved:", #all_tracks)
+    print("=== End Saving Tracks to Snapshot ===\n")
+    
+    -- Save send and receive configurations
+    SaveSend(snapshotIndex)
+    SaveReceive(snapshotIndex)
+    
+    -- Save the snapshot configuration
+    SaveSnapshotConfig()
     
     -- Restore original selection
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
     
-    -- Save the updated configuration
-    SaveSnapshotConfig()
-    print("=== End OverwriteSnapshot Debug ===\n")
+    print("Snapshot updated successfully")
 end
 
 function VersionModeOverwrite(i) -- i to check which tracks group is using
@@ -364,18 +367,6 @@ function CreateTrackWithChunk(i,chunk,idx, new_guid)
 end
 
 function ChunkSwap(chunk, track_chunk, filterType)
-    print("\n=== ChunkSwap ===")
-    print("Filter Type:", filterType)
-    print("\nSource Chunk:")
-    print("================================")
-    print(chunk)
-    print("================================")
-    
-    print("\nTarget Chunk:")
-    print("================================")
-    print(track_chunk)
-    print("================================")
-    
     -- Handle LAYOUTS separately first
     if filterType == "TCP" then
         track_chunk = SwapChunkValueSpecific(chunk, track_chunk, "LAYOUTS", {1})
@@ -451,22 +442,51 @@ function ChunkSwap(chunk, track_chunk, filterType)
         end
     end
     
-    print("\nMerged Chunk:")
-    print("================================")
-    print(track_chunk)
-    print("================================")
-    
     return track_chunk
 end
 
--- Helper function to check if a value exists in a table
-function table.contains(table, element)
-    for _, value in pairs(table) do
-        if value == element then
-            return true
+function SwapChunkValueSpecific(sourceChunk, targetChunk, key, indices)
+    local start_time = reaper.time_precise()
+    
+    -- Find the key in both chunks
+    local sourcePattern = key .. " ([^\n]+)"
+    local targetPattern = key .. " ([^\n]+)"
+    
+    local sourceValue = sourceChunk:match(sourcePattern)
+    local targetValue = targetChunk:match(targetPattern)
+    
+    if not sourceValue or not targetValue then
+        return targetChunk
+    end
+    
+    -- Split values into tables
+    local sourceValues = {}
+    local targetValues = {}
+    
+    for value in sourceValue:gmatch("[^%s]+") do
+        table.insert(sourceValues, value)
+    end
+    
+    for value in targetValue:gmatch("[^%s]+") do
+        table.insert(targetValues, value)
+    end
+    
+    -- Update only the specified indices
+    for _, index in ipairs(indices) do
+        if sourceValues[index] and targetValues[index] then
+            targetValues[index] = sourceValues[index]
         end
     end
-    return false
+    
+    -- Reconstruct the value string
+    local newValue = table.concat(targetValues, " ")
+    
+    -- Replace the value in the target chunk
+    local newChunk = targetChunk:gsub(targetPattern, key .. " " .. newValue)
+    
+    print("[SwapChunkValueSpecific] took", (reaper.time_precise() - start_time) * 1000, "ms")
+    
+    return newChunk
 end
 
 function SetSnapshotInNewTracks(i)
@@ -632,8 +652,72 @@ function SubstituteTrackWithNewAll(i, track)
 end
 
 function DeleteSnapshot(i)
-    Snapshot[i] = nil
+    print("\n=== DeleteSnapshot Debug ===")
+    print("Deleting snapshot index:", i)
+    
+    if not Snapshot[i] then
+        print("Error: Snapshot not found")
+        return
+    end
+    
+    -- Get snapshot info before deletion
+    local snapshotName = Snapshot[i].Name
+    local groupName = Snapshot[i].Group
+    local subGroup = Snapshot[i].SubGroup
+    
+    print("Snapshot name:", snapshotName)
+    print("Group:", groupName)
+    print("SubGroup:", subGroup)
+    
+    -- Find the group
+    local group = nil
+    for _, g in ipairs(Configs.Groups) do
+        if g.name == groupName then
+            group = g
+            break
+        end
+    end
+    
+    if group then
+        -- Update group's selected snapshots
+        if subGroup == "TCP" then
+            if group.selectedTCP == snapshotName then
+                group.selectedTCP = nil
+            end
+            -- Remove from TCP subGroups
+            if group.subGroups and group.subGroups.TCP then
+                for j = #group.subGroups.TCP, 1, -1 do
+                    if group.subGroups.TCP[j] == snapshotName then
+                        table.remove(group.subGroups.TCP, j)
+                        break
+                    end
+                end
+            end
+        elseif subGroup == "MCP" then
+            if group.selectedMCP == snapshotName then
+                group.selectedMCP = nil
+            end
+            -- Remove from MCP subGroups
+            if group.subGroups and group.subGroups.MCP then
+                for j = #group.subGroups.MCP, 1, -1 do
+                    if group.subGroups.MCP[j] == snapshotName then
+                        table.remove(group.subGroups.MCP, j)
+                        break
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Remove the snapshot
+    table.remove(Snapshot, i)
+    
+    -- Save changes
     SaveSnapshotConfig()
+    SaveConfig()
+    
+    print("Snapshot deleted successfully")
+    print("=== End DeleteSnapshot Debug ===\n")
 end
 
 function RemoveTrackFromSnapshot(i, track)
@@ -679,13 +763,37 @@ function LoadSnapshot()
         Snapshot = {} 
     end
 
-    for i, value in pairs(Snapshot) do-- For catching Snapshots that lost Tracks while script want running
-        for key, track in pairs(Snapshot[i].Tracks) do
-            if  type(track) == 'string' and Snapshot[i].MissTrack == false then 
-                Snapshot[i].MissTrack  = true
-            end 
+    -- Ensure all snapshots have required fields and valid group associations
+    for i, snapshot in pairs(Snapshot) do
+        -- Ensure basic fields exist
+        if not snapshot.Group then
+            print("Warning: Snapshot " .. (snapshot.Name or "unnamed") .. " has no group association")
+            snapshot.Group = "Default"  -- Assign to default group if missing
+        end
+        if not snapshot.SubGroup then
+            snapshot.SubGroup = "TCP"  -- Default to TCP if missing
+        end
+        if not snapshot.Mode then
+            snapshot.Mode = "ALL"  -- Default to ALL if missing
+        end
+        
+        -- Check for missing tracks
+        if snapshot.Tracks then
+            for key, track in pairs(snapshot.Tracks) do
+                if type(track) == 'string' and not snapshot.MissTrack then 
+                    snapshot.MissTrack = true
+                end 
+            end
+        end
+        
+        -- Ensure chunk data exists
+        if not snapshot.Chunk then
+            snapshot.Chunk = {}
         end
     end
+
+    -- Save any fixes back to disk
+    SaveExtStateTable(ScriptName, 'SnapshotTable', table_copy_regressive(Snapshot), true)
 
     return Snapshot
 end
@@ -1171,15 +1279,10 @@ end
 
 -- Modified SetSnapshot to handle TCP/MCP filtering
 function SetSnapshotFiltered(i, filterType)
-    print("\n=== SetSnapshotFiltered Debug ===")
-    print("Snapshot Index:", i)
-    print("Filter Type:", filterType)
-    print("Snapshot Name:", Snapshot[i].Name)
+    print("\n=== SetSnapshotFiltered ===")
+    local start_time = reaper.time_precise()
     
-    if not Snapshot[i] then 
-        print("No snapshot found at index:", i)
-        return 
-    end
+    if not Snapshot[i] then return end
     
     -- Get the current group
     local group = nil
@@ -1190,23 +1293,15 @@ function SetSnapshotFiltered(i, filterType)
         end
     end
     
-    if not group then 
-        print("No group found for snapshot:", Snapshot[i].Group)
-        return 
-    end
-    
-    print("Group:", group.name)
+    if not group then return end
     
     -- Get all tracks from the snapshot
     local snapshotTracks = {}
     for _, track in pairs(Snapshot[i].Tracks) do
         if reaper.ValidatePtr2(0, track, 'MediaTrack*') then
             table.insert(snapshotTracks, track)
-            print("Found snapshot track:", reaper.GetTrackName(track))
         end
     end
-    
-    print("\nTotal tracks to process:", #snapshotTracks)
     
     -- Save current selection
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
@@ -1216,59 +1311,79 @@ function SetSnapshotFiltered(i, filterType)
         reaper.SetTrackSelected(track, true)
     end
     
-    -- Apply the snapshot with filtering
+    -- Get filtered config
+    local filteredConfig = GetFilteredConfig(filterType)
+    
+    -- Cache chunks to avoid repeated processing
+    local chunk_cache = {}
+    local tracksToUpdate = {}
+    local total_chunk_time = 0
+    local total_swap_time = 0
+    
+    -- First pass: collect all chunks and changes
     for _, track in pairs(snapshotTracks) do
         if Snapshot[i].Chunk[track] then
-            local _, track_name = reaper.GetTrackName(track)
-            print("\nProcessing track:", track_name)
-            
             -- Get the current track's chunk
+            local chunk_start = reaper.time_precise()
             local retval, current_chunk = reaper.GetTrackStateChunk(track, '', false)
+            local chunk_time = (reaper.time_precise() - chunk_start) * 1000
+            total_chunk_time = total_chunk_time + chunk_time
+            
             if retval then
-                print("\nCurrent track chunk:")
-                print("================================")
-                print(current_chunk)
-                print("================================")
-                
-                print("\nSnapshot chunk to apply:")
-                print("================================")
-                print(Snapshot[i].Chunk[track])
-                print("================================")
+                -- Only process if chunks are different
+                if current_chunk ~= Snapshot[i].Chunk[track] then
+                    -- Cache the chunks
+                    chunk_cache[track] = {
+                        source = Snapshot[i].Chunk[track],
+                        target = current_chunk
+                    }
                 
                 -- Use ChunkSwap with our existing configs to filter parameters
+                    local swap_start = reaper.time_precise()
                 local newChunk = ChunkSwap(Snapshot[i].Chunk[track], current_chunk, filterType)
+                    local swap_time = (reaper.time_precise() - swap_start) * 1000
+                    total_swap_time = total_swap_time + swap_time
+                    
                 if newChunk then
-                    print("\nFinal merged chunk being applied:")
-                    print("================================")
-                    print(newChunk)
-                    print("================================")
-                    reaper.SetTrackStateChunk(track, newChunk, false)
-                else
-                    print("No filtered chunk returned for track")
+                        table.insert(tracksToUpdate, {track = track, chunk = newChunk})
                 end
             end
-        else
-            local _, track_name = reaper.GetTrackName(track)
-            print("\nNo chunk found for track:", track_name)
+            end
         end
     end
+    
+    -- Second pass: apply all changes in a single batch with UI refresh disabled
+    reaper.PreventUIRefresh(1)
+    
+    -- Collect all track updates
+    local update_start = reaper.time_precise()
+    for _, update in ipairs(tracksToUpdate) do
+        reaper.SetTrackStateChunk(update.track, update.chunk, false)
+    end
+    
+    -- Re-enable UI refresh and update layouts ONCE at the very end
+    reaper.PreventUIRefresh(-1)
     
     -- Restore original selection
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
     
     -- Update visibility based on group state
     if group.active then
-        print("\nShowing group tracks")
         ShowGroupTracks(group)
     else
-        print("\nHiding group tracks")
         HideGroupTracks(group)
     end
     
-    -- Refresh the layout and theme
+    -- Only refresh layouts ONCE at the very end
     reaper.TrackList_AdjustWindows(false)
     reaper.ThemeLayout_RefreshAll()
-    print("=== End SetSnapshotFiltered Debug ===\n")
+    
+    -- Print only critical timing information
+    print("Chunk processing:", total_chunk_time, "ms")
+    print("Chunk swapping:", total_swap_time, "ms")
+    print("Track updates:", (reaper.time_precise() - update_start) * 1000, "ms")
+    print("Total time:", (reaper.time_precise() - start_time) * 1000, "ms")
+    print("=== End SetSnapshotFiltered ===\n")
 end
 
 -- Function to get parent track of a group
@@ -1310,72 +1425,74 @@ end
 
 -- Function to show tracks based on snapshots
 function ShowGroupTracks(group)
+    local start_time = reaper.time_precise()
     print("\n=== ShowGroupTracks Debug ===")
-    print("Group:", group.name)
-    
-    if not group then 
-        print("No group provided")
-        return 
-    end
+    print("Group:", group)
     
     local parentTrack = GetParentTrackOfGroup(group)
+    print("Parent track type:", type(parentTrack))
+    print("Parent track:", parentTrack)
+    
     if not parentTrack then 
-        print("Failed to get parent track")
+        print("No parent track found for group:", group)
+        print("=== End ShowGroupTracks Debug ===\n")
         return 
     end
     
-    print("Parent track type:", type(parentTrack))
-    print("Parent track:", tostring(parentTrack))
-    
-    -- Get all child tracks
     local childCount = reaper.CountTrackMediaItems(parentTrack)
     print("Child count:", childCount)
     
+    -- Show parent track
+    reaper.SetMediaTrackInfo_Value(parentTrack, "B_SHOWINMIXER", 1)
+    reaper.SetMediaTrackInfo_Value(parentTrack, "B_SHOWINTCP", 1)
+    
+    -- Show all child tracks
     for i = 0, childCount - 1 do
-        local mediaItem = reaper.GetTrackMediaItem(parentTrack, i)
-        if mediaItem then
-            local childTrack = reaper.GetTrackMediaItem_Track(mediaItem)
+        local childTrack = reaper.GetTrackMediaItem(parentTrack, i)
             if childTrack then
-                print("\nProcessing child track:")
-                print("Track type:", type(childTrack))
-                print("Track:", tostring(childTrack))
-                
-                -- Validate track pointer
-                if reaper.ValidatePtr2(0, childTrack, 'MediaTrack*') then
-                    local _, track_name = reaper.GetTrackName(childTrack)
-                    print("Track name:", track_name)
-                    reaper.SetMediaTrackInfo_Value(childTrack, "B_SHOWINTCP", 1)
-                    reaper.SetMediaTrackInfo_Value(childTrack, "B_SHOWINMIXER", 1)
-                else
-                    print("Invalid track pointer")
-                end
-            else
-                print("Failed to get child track from media item")
+            local childTrackPtr = reaper.GetMediaItem_Track(childTrack)
+            if childTrackPtr then
+                reaper.SetMediaTrackInfo_Value(childTrackPtr, "B_SHOWINMIXER", 1)
+                reaper.SetMediaTrackInfo_Value(childTrackPtr, "B_SHOWINTCP", 1)
             end
-        else
-            print("No media item at index:", i)
         end
     end
+    
     print("=== End ShowGroupTracks Debug ===\n")
+    print("ShowGroupTracks took", (reaper.time_precise() - start_time) * 1000, "ms")
 end
 
 -- Function to hide all tracks in a group
 function HideGroupTracks(group)
+    local start_time = reaper.time_precise()
     print("\n=== HideGroupTracks Debug ===")
-    print("Group:", group.name)
+    print("Group:", group)
     
     local parentTrack = GetParentTrackOfGroup(group)
+    print("Parent track type:", type(parentTrack))
+    print("Parent track:", parentTrack)
+    
     if not parentTrack then 
-        print("Failed to get parent track")
+        print("No parent track found for group:", group)
+        print("=== End HideGroupTracks Debug ===\n")
         return 
     end
     
-    -- Save current selection
+    -- Save current selection at the very beginning
+    print("\nSaving current selection with _SWS_SAVESEL")
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
+    print("Current selection saved")
+    
+    -- First, deselect all tracks
+    print("\nDeselecting all tracks")
+    reaper.Main_OnCommand(40297, 0) -- Track: Unselect all tracks
+    print("All tracks deselected")
     
     -- Select the parent track and all its children
+    print("\nSelecting parent track and children")
     reaper.SetTrackSelected(parentTrack, true)
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
+    print("Parent track and children selected")
     
     -- Get all selected tracks (including children)
     local all_tracks = {}
@@ -1383,22 +1500,157 @@ function HideGroupTracks(group)
         local track = reaper.GetSelectedTrack(0, i)
         table.insert(all_tracks, track)
     end
+    print("Found", #all_tracks, "tracks to process")
     
-    -- Hide all tracks found
+    -- Add any additional tracks from the group's scope
+    if group.additionalTracks then
+        print("\nProcessing additional tracks from group scope")
+        for _, guid in ipairs(group.additionalTracks) do
+            local track = GetTrackByGUID(guid)
+            if track then
+                table.insert(all_tracks, track)
+                
+                -- If this track is a parent track, also add its children
+                local depth = reaper.GetTrackDepth(track)
+                if depth >= 0 then
+                    print("\nProcessing parent track's children")
+                    -- Select just this track and its children
+                    print("Selecting track and its children")
+                    reaper.Main_OnCommand(40297, 0) -- Unselect all tracks
+                    reaper.SetTrackSelected(track, true)
+                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
+                    print("Track and children selected")
+                    
+                    -- Add children to all_tracks
+                    for i = 0, reaper.CountSelectedTracks(0) - 1 do
+                        local childTrack = reaper.GetSelectedTrack(0, i)
+                        table.insert(all_tracks, childTrack)
+                    end
+                    print("Added", reaper.CountSelectedTracks(0), "children to process")
+                end
+            end
+        end
+    end
+    
+    -- Hide all tracks found without selecting them
+    print("\nHiding", #all_tracks, "tracks")
     for _, track in ipairs(all_tracks) do
-        local _, track_name = reaper.GetTrackName(track)
-        print("Hiding track:", track_name)
+        -- Set both TCP and MCP visibility to 0
+        reaper.SetMediaTrackInfo_Value(track, "B_SHOWINMIXER", 0)  -- Hide in MCP
+        reaper.SetMediaTrackInfo_Value(track, "B_SHOWINTCP", 0)   -- Hide in TCP
+    end
+    print("All tracks hidden")
+    
+    -- Restore original selection at the very end
+    print("\nRestoring original selection with _SWS_RESTORESEL")
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
+    print("Original selection restored")
+    
+    -- Force REAPER to refresh the mixer view
+    reaper.TrackList_AdjustWindows(false)
+    reaper.ThemeLayout_RefreshAll()
+    
+    print("=== End HideGroupTracks Debug ===\n")
+    print("HideGroupTracks took", (reaper.time_precise() - start_time) * 1000, "ms")
+end
+
+-- Function to apply snapshots to a group
+function ApplyGroupSnapshots(group)
+    print("\n=== ApplyGroupSnapshots ===")
+    local start_time = reaper.time_precise()
+    
+    -- Find snapshots first to avoid repeated lookups
+    local tcpSnapshot, mcpSnapshot = nil, nil
+    
+    -- Debug output
+    print("Looking for snapshots for group:", group.name)
+    print("Selected TCP:", group.selectedTCP)
+    print("Selected MCP:", group.selectedMCP)
+    
+    -- Find TCP snapshot
+    if group.selectedTCP then
+        for i, snapshot in ipairs(Snapshot) do
+            if snapshot.Name == group.selectedTCP and snapshot.Group == group.name and snapshot.SubGroup == "TCP" then
+                tcpSnapshot = snapshot
+                print("Found TCP snapshot:", snapshot.Name)
+                break
+            end
+        end
+        if not tcpSnapshot then
+            print("Warning: Could not find TCP snapshot:", group.selectedTCP)
+        end
+    end
+    
+    -- Find MCP snapshot
+    if group.selectedMCP then
+        for i, snapshot in ipairs(Snapshot) do
+            if snapshot.Name == group.selectedMCP and snapshot.Group == group.name and snapshot.SubGroup == "MCP" then
+                mcpSnapshot = snapshot
+                print("Found MCP snapshot:", snapshot.Name)
+                break
+            end
+        end
+        if not mcpSnapshot then
+            print("Warning: Could not find MCP snapshot:", group.selectedMCP)
+        end
+    end
+    
+    -- If no snapshots found, return early
+    if not tcpSnapshot and not mcpSnapshot then
+        print("No valid snapshots found for group")
+        return
+    end
+    
+    -- Save current selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
+    
+    -- Get all tracks that need to be updated
+    local tracksToUpdate = {}
+    
+    -- Collect tracks from TCP snapshot
+    if tcpSnapshot and tcpSnapshot.Tracks then
+        for _, track in pairs(tcpSnapshot.Tracks) do
+            if reaper.ValidatePtr2(0, track, 'MediaTrack*') then
+                table.insert(tracksToUpdate, track)
+            end
+        end
+    end
+    
+    -- Collect tracks from MCP snapshot
+    if mcpSnapshot and mcpSnapshot.Tracks then
+        for _, track in pairs(mcpSnapshot.Tracks) do
+            if reaper.ValidatePtr2(0, track, 'MediaTrack*') then
+                table.insert(tracksToUpdate, track)
+            end
+        end
+    end
+    
+    -- Apply snapshots to tracks
+    for _, track in ipairs(tracksToUpdate) do
+        local tcpChunk = tcpSnapshot and tcpSnapshot.Chunk[track]
+        local mcpChunk = mcpSnapshot and mcpSnapshot.Chunk[track]
         
-        -- Hide in TCP and MCP
-        reaper.SetMediaTrackInfo_Value(track, 'B_SHOWINTCP', 0)
-        reaper.SetMediaTrackInfo_Value(track, 'B_SHOWINMIXER', 0)
-        
-        -- Update the track's chunk to ensure visibility state is saved
-        local retval, chunk = reaper.GetTrackStateChunk(track, '', false)
-        if retval then
-            -- Update SHOWINMIX to hide in both TCP and MCP
-            chunk = chunk:gsub("SHOWINMIX [^\n]+", "SHOWINMIX 0 0 0 0")
-            reaper.SetTrackStateChunk(track, chunk, false)
+        if tcpChunk or mcpChunk then
+            -- Get current track state
+            local retval, currentChunk = reaper.GetTrackStateChunk(track, '', false)
+            if retval then
+                local newChunk = currentChunk
+                
+                -- Apply TCP changes if available
+                if tcpChunk then
+                    print("\nApplying TCP changes for track:", reaper.GetTrackName(track))
+                    newChunk = ChunkSwap(tcpChunk, newChunk, "TCP")
+                end
+                
+                -- Apply MCP changes if available
+                if mcpChunk then
+                    print("\nApplying MCP changes for track:", reaper.GetTrackName(track))
+                    newChunk = ChunkSwap(mcpChunk, newChunk, "MCP")
+                end
+                
+                -- Apply the combined changes
+                reaper.SetTrackStateChunk(track, newChunk, false)
+            end
         end
     end
     
@@ -1407,46 +1659,121 @@ function HideGroupTracks(group)
     
     -- Force REAPER to refresh all layouts
     reaper.ThemeLayout_RefreshAll()
-    print("=== End HideGroupTracks Debug ===\n")
+    
+    print(string.format("Total snapshot application took %.3f ms", (reaper.time_precise() - start_time) * 1000))
+    print("=== End ApplyGroupSnapshots ===\n")
 end
 
--- Function to apply snapshots to a group
-function ApplyGroupSnapshots(group)
-    print("\n=== ApplyGroupSnapshots Debug ===")
-    print("Group:", group.name)
-    print("Selected TCP:", group.selectedTCP)
-    print("Selected MCP:", group.selectedMCP)
-    print("Group Active:", group.active)
+-- Function to combine TCP and MCP snapshots and apply them in a single pass
+function CombineAndApplySnapshots(tcpSnapshot, mcpSnapshot, tracks)
+    print("\n=== CombineAndApplySnapshots ===")
+    local start_time = reaper.time_precise()
     
-    -- Find and apply TCP snapshot
-    if group.selectedTCP then
-        print("\nProcessing TCP snapshot:", group.selectedTCP)
-        for i, snapshot in ipairs(Snapshot) do
-            if snapshot.Name == group.selectedTCP and snapshot.Group == group.name then
-                print("Found matching snapshot at index:", i)
-                print("Applying TCP snapshot")
-                SetSnapshotFiltered(i, "TCP")
-                break
+    -- Prevent UI updates for the entire operation
+    reaper.PreventUIRefresh(1)
+    
+    -- Save current selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
+    
+    -- Select all tracks to process
+    for _, track in ipairs(tracks) do
+        reaper.SetTrackSelected(track, true)
+    end
+    
+    -- Cache chunks to avoid repeated processing
+    local chunk_cache = {}
+    local tracksToUpdate = {}
+    local total_chunk_time = 0
+    local total_swap_time = 0
+    
+    -- First pass: collect all chunks and changes
+    for _, track in ipairs(tracks) do
+        -- Get the current track's chunk
+        local chunk_start = reaper.time_precise()
+        local retval, current_chunk = reaper.GetTrackStateChunk(track, '', false)
+        local chunk_time = (reaper.time_precise() - chunk_start) * 1000
+        total_chunk_time = total_chunk_time + chunk_time
+        
+        if retval then
+            local newChunk = current_chunk
+            
+            -- Get filtered configs for both TCP and MCP
+            local tcpConfig = GetFilteredConfig("TCP")
+            local mcpConfig = GetFilteredConfig("MCP")
+            
+            -- Process each option type
+            for _, option in ipairs(tcpConfig.visibilityOptions) do
+                if option.ChunkKey == "LAYOUTS" then
+                    -- Get TCP layout value
+                    local tcpValue = tcpSnapshot and tcpSnapshot.Chunk[track] and tcpSnapshot.Chunk[track]:match("LAYOUTS%s+([^\n]+)")
+                    if tcpValue then
+                        local values = {}
+                        for v in tcpValue:gmatch("[^%s]+") do
+                            table.insert(values, v)
+                        end
+                        values[1] = values[1] or ""  -- TCP layout
+                        
+                        -- Get MCP layout value
+                        local mcpValue = mcpSnapshot and mcpSnapshot.Chunk[track] and mcpSnapshot.Chunk[track]:match("LAYOUTS%s+([^\n]+)")
+                        if mcpValue then
+                            local mcpValues = {}
+                            for v in mcpValue:gmatch("[^%s]+") do
+                                table.insert(mcpValues, v)
+                            end
+                            values[2] = mcpValues[2] or ""  -- MCP layout
+                        else
+                            values[2] = values[2] or ""  -- Keep existing MCP layout
+                        end
+                        
+                        -- Construct complete LAYOUTS value
+                        local newValue = table.concat(values, " ")
+                        newChunk = newChunk:gsub("LAYOUTS%s+[^\n]+", "LAYOUTS " .. newValue)
+                    end
+                else
+                    -- For non-LAYOUTS options, get value from TCP snapshot
+                    local tcpValue = tcpSnapshot and tcpSnapshot.Chunk[track] and tcpSnapshot.Chunk[track]:match(option.ChunkKey .. "%s+([^\n]+)")
+                    if tcpValue then
+                        newChunk = newChunk:gsub(option.ChunkKey .. "%s+[^\n]+", option.ChunkKey .. " " .. tcpValue)
+                    end
+                end
+            end
+            
+            -- Process MCP-specific options
+            for _, option in ipairs(mcpConfig.visibilityOptions) do
+                if option.ChunkKey ~= "LAYOUTS" then  -- Skip LAYOUTS as we handled it above
+                    local mcpValue = mcpSnapshot and mcpSnapshot.Chunk[track] and mcpSnapshot.Chunk[track]:match(option.ChunkKey .. "%s+([^\n]+)")
+                    if mcpValue then
+                        newChunk = newChunk:gsub(option.ChunkKey .. "%s+[^\n]+", option.ChunkKey .. " " .. mcpValue)
+                    end
+                end
+            end
+            
+            if newChunk ~= current_chunk then
+                table.insert(tracksToUpdate, {track = track, chunk = newChunk})
             end
         end
     end
     
-    -- Find and apply MCP snapshot
-    if group.selectedMCP then
-        print("\nProcessing MCP snapshot:", group.selectedMCP)
-        for i, snapshot in ipairs(Snapshot) do
-            if snapshot.Name == group.selectedMCP and snapshot.Group == group.name then
-                print("Found matching snapshot at index:", i)
-                print("Applying MCP snapshot")
-                SetSnapshotFiltered(i, "MCP")
-                break
-            end
-        end
+    -- Apply all changes in a single batch
+    local update_start = reaper.time_precise()
+    for _, update in ipairs(tracksToUpdate) do
+        reaper.SetTrackStateChunk(update.track, update.chunk, false)
     end
     
-    -- Force REAPER to refresh all layouts
+    -- Restore original selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
+    
+    -- Re-enable UI refresh and update layouts ONCE at the very end
+    reaper.PreventUIRefresh(-1)
+    reaper.TrackList_AdjustWindows(false)
     reaper.ThemeLayout_RefreshAll()
-    print("=== End ApplyGroupSnapshots Debug ===\n")
+    
+    -- Print timing information
+    print("Chunk processing:", total_chunk_time, "ms")
+    print("Chunk swapping:", total_swap_time, "ms")
+    print("Track updates:", (reaper.time_precise() - update_start) * 1000, "ms")
+    print("Total time:", (reaper.time_precise() - start_time) * 1000, "ms")
+    print("=== End CombineAndApplySnapshots ===\n")
 end
 
 -- Function to get all top-level tracks
@@ -1524,76 +1851,138 @@ end
 -- Modified HandleGroupActivation function
 function HandleGroupActivation(group)
     print("\n=== HandleGroupActivation Debug ===")
-    print("Group:", group.name)
-    print("Active:", group.active)
-    print("View Mode:", Configs.ViewMode)
+    local start_time = reaper.time_precise()
     
-    -- Save current track selection state ONCE at the start
+    -- Log initial selection count
+    local initial_selection_count = reaper.CountSelectedTracks(0)
+    print("Initial selected tracks:", initial_selection_count)
+    
+    -- Save current selection state at the very beginning
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
     
+    -- Prevent UI updates and undo points for the entire operation
+    reaper.PreventUIRefresh(1)
+    reaper.Undo_BeginBlock()
+    
+    -- Get parent track once at the beginning and cache it
+    local parentTrack = GetParentTrackOfGroup(group)
+    local parentTracks = {}
+    if parentTrack then
+        parentTracks = GetParentTracks(parentTrack)
+    end
+    
+    -- Flag to track if snapshots have been applied
+    local snapshotsApplied = false
+    
     if Configs.ViewMode == "Toggle" then
-        -- Original toggle behavior
         if not group.active then
+            local hide_start = reaper.time_precise()
             HideGroupTracks(group)
+            print("HideGroupTracks took:", (reaper.time_precise() - hide_start) * 1000, "ms")
         else
+            local show_start = reaper.time_precise()
             ShowGroupTracks(group)
-            ApplyGroupSnapshots(group)
+            print("ShowGroupTracks took:", (reaper.time_precise() - show_start) * 1000, "ms")
         end
     elseif Configs.ViewMode == "Exclusive" then
-        -- Exclusive mode: deactivate all other groups and hide all tracks
         if group.active then
+            local hide_start = reaper.time_precise()
             HideAllTracks()
-            -- Deactivate all other groups
+            print("HideAllTracks took:", (reaper.time_precise() - hide_start) * 1000, "ms")
+            
+            local deactivate_start = reaper.time_precise()
             for _, otherGroup in ipairs(Configs.Groups) do
                 if otherGroup ~= group then
                     otherGroup.active = false
                 end
             end
+            print("Deactivate other groups took:", (reaper.time_precise() - deactivate_start) * 1000, "ms")
+            
+            local show_start = reaper.time_precise()
             ShowGroupTracks(group)
-            ApplyGroupSnapshots(group)
+            print("ShowGroupTracks took:", (reaper.time_precise() - show_start) * 1000, "ms")
+        else
+            -- When deactivating in Exclusive mode, show all tracks
+            local show_start = reaper.time_precise()
+            for i = 0, reaper.CountTracks(0) - 1 do
+                local track = reaper.GetTrack(0, i)
+                reaper.SetMediaTrackInfo_Value(track, "B_SHOWINTCP", 1)
+                reaper.SetMediaTrackInfo_Value(track, "B_SHOWINMIXER", 1)
+            end
+            print("Show all tracks took:", (reaper.time_precise() - show_start) * 1000, "ms")
         end
     elseif Configs.ViewMode == "LimitedExclusive" then
-        -- Limited Exclusive mode: only affects folder collapsed state and heights
         if group.active then
-            -- Deactivate all other groups
+            local deactivate_start = reaper.time_precise()
             for _, otherGroup in ipairs(Configs.Groups) do
                 if otherGroup ~= group then
                     otherGroup.active = false
                 end
             end
+            print("Deactivate other groups took:", (reaper.time_precise() - deactivate_start) * 1000, "ms")
             
-            -- Set all tracks to minimum height
+            local collect_start = reaper.time_precise()
+            local allTracks = {}
+            for i = 0, reaper.CountTracks(0) - 1 do
+                table.insert(allTracks, reaper.GetTrack(0, i))
+            end
+            print("Collect all tracks took:", (reaper.time_precise() - collect_start) * 1000, "ms")
+            
+            local show_start = reaper.time_precise()
+            ShowTracksMinimumHeight(allTracks)
+            print("ShowTracksMinimumHeight took:", (reaper.time_precise() - show_start) * 1000, "ms")
+            
+            local collapse_start = reaper.time_precise()
+            CollapseTopLevelTracks()
+            print("CollapseTopLevelTracks took:", (reaper.time_precise() - collapse_start) * 1000, "ms")
+            
+            -- Only handle parent track operations if we have a valid parent track
+            if parentTrack then
+                local parent_start = reaper.time_precise()
+                -- Perform parent track operations without selecting tracks
+                reaper.SetMediaTrackInfo_Value(parentTrack, "I_FOLDERCOMPACT", 2) -- Collapse parent track
+                reaper.SetMediaTrackInfo_Value(parentTrack, "I_FOLDERDEPTH", 1)  -- Set folder depth
+                print("Parent track operations took:", (reaper.time_precise() - parent_start) * 1000, "ms")
+            end
+        else
+            -- When deactivating in LimitedExclusive mode, show all tracks at minimum height
+            local show_start = reaper.time_precise()
             local allTracks = {}
             for i = 0, reaper.CountTracks(0) - 1 do
                 table.insert(allTracks, reaper.GetTrack(0, i))
             end
             ShowTracksMinimumHeight(allTracks)
-            
-            -- Collapse all top-level tracks
-            CollapseTopLevelTracks()
-            
-            -- Apply snapshots to the active group
-            ApplyGroupSnapshots(group)
-            
-            -- Select the parent track of the group for scrolling
-            local parentTrack = GetParentTrackOfGroup(group)
-            if parentTrack then
-                -- Deselect all tracks and select only the parent
-                reaper.Main_OnCommand(40297, 0) -- Track: Unselect all tracks
-                reaper.SetTrackSelected(parentTrack, true)
-                
-                -- Scroll MCP and TCP to show the parent track
-                reaper.Main_OnCommand(reaper.NamedCommandLookup("_RS7fb3d74a01cfeae229ad75b83192ca5086acbdbd"), 0) -- Scroll MCP to first selected track
-                reaper.Main_OnCommand(reaper.NamedCommandLookup("_RS9d2de0644134078c900c5baf59a2e900f1fe0c55"), 0) -- Scroll TCP vertically to first selected track
-            end
+            print("Show all tracks at minimum height took:", (reaper.time_precise() - show_start) * 1000, "ms")
         end
     end
     
-    -- Restore original track selection ONCE at the end
+    -- Apply snapshots only once at the end, after all track operations are complete
+    if group.active and not snapshotsApplied then
+        local snap_start = reaper.time_precise()
+        ApplyGroupSnapshots(group)
+        snapshotsApplied = true
+        print("ApplyGroupSnapshots took:", (reaper.time_precise() - snap_start) * 1000, "ms")
+    end
+    
+    -- Re-enable UI refresh and update layouts ONCE at the very end
+    local refresh_start = reaper.time_precise()
+    reaper.PreventUIRefresh(-1)
+    reaper.TrackList_AdjustWindows(false)
+    reaper.ThemeLayout_RefreshAll()
+    print("UI refresh and layout updates took:", (reaper.time_precise() - refresh_start) * 1000, "ms")
+    
+    -- End undo block without creating an undo point
+    reaper.Undo_EndBlock("", 0)
+    
+    -- Restore original selection at the very end
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
     
-    -- Force REAPER to refresh all layouts
-    reaper.ThemeLayout_RefreshAll()
+    -- Log final selection count
+    local final_selection_count = reaper.CountSelectedTracks(0)
+    print("Final selected tracks:", final_selection_count)
+    print("Selection count difference:", final_selection_count - initial_selection_count)
+    
+    print("Total activation took", (reaper.time_precise() - start_time) * 1000, "ms")
     print("=== End HandleGroupActivation Debug ===\n")
 end
 
@@ -1780,28 +2169,101 @@ function SaveTCPSnapshot()
     TempRenamePopup = true
     TempPopup_i = i
     
+    -- Update the group's selected TCP snapshot and add to subGroups
+    print("\nUpdating group configuration:")
+    print("Group name:", group.name)
+    print("New snapshot name:", Snapshot[i].Name)
+    
+    group.selectedTCP = Snapshot[i].Name
+    if not group.subGroups then
+        print("Initializing subGroups structure")
+        group.subGroups = {
+            TCP = {},
+            MCP = {}
+        }
+    end
+    
+    -- Add to TCP subGroups array
+    print("Adding snapshot to TCP subGroups")
+    table.insert(group.subGroups.TCP, Snapshot[i].Name)
+    print("Current TCP snapshots:", table.concat(group.subGroups.TCP, ", "))
+    
+    -- Save both configs
+    print("\nSaving configurations")
     SaveSnapshotConfig()
+    SaveConfig()
+    
+    -- Force REAPER to refresh the mixer view
+    reaper.TrackList_AdjustWindows(false)
+    reaper.ThemeLayout_RefreshAll()
+    
     print("=== End SaveTCPSnapshot Debug ===\n")
 end
 
 -- Function to save MCP-specific snapshot
 function SaveMCPSnapshot()
-    local sel_tracks = SaveSelectedTracks()
-    if #sel_tracks == 0 then
-        print('👨< Please Select Some Tracks ❤️)') 
+    print("\n=== SaveMCPSnapshot Debug ===")
+    
+    -- Get the current group
+    local group = nil
+    for _, g in ipairs(Configs.Groups) do
+        if g.name == Configs.CurrentGroup then
+            group = g
+            break
+        end
+    end
+    
+    if not group or not group.parentTrack then
+        print("No valid group or parent track found")
         return 
     end
+    
+    -- Get the actual MediaTrack pointer from the stored GUID
+    local parentTrack = GetTrackByGUID(group.parentTrack)
+    if not parentTrack then
+        print("Could not find parent track from GUID")
+        return
+    end
+    
+    local _, parent_name = reaper.GetTrackName(parentTrack)
+    print("Group parent track:", parent_name)
     
     -- Save current selection
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
     
-    -- Select all tracks in the folder structure
-    for _, track in pairs(sel_tracks) do
+    -- First, deselect all tracks
+    reaper.Main_OnCommand(40297, 0) -- Track: Unselect all tracks
+    
+    -- Select the parent track and all its children
+    reaper.SetTrackSelected(parentTrack, true)
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
+    
+    -- Add additional tracks from the group's scope
+    if group.additionalTracks then
+        for _, guid in ipairs(group.additionalTracks) do
+            local track = GetTrackByGUID(guid)
+            if track then
+                reaper.SetTrackSelected(track, true)
+                
+                -- If this track is a parent track, also select its children
+                local depth = reaper.GetTrackDepth(track)
+                if depth >= 0 then
+                    -- Save current selection
+                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
+                    
+                    -- Select just this track and its children
+                    reaper.Main_OnCommand(40297, 0) -- Unselect all tracks
         reaper.SetTrackSelected(track, true)
         reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
+                    
+                    -- Merge with previous selection
+                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
+                end
+            end
+        end
     end
     
-    -- Get all selected tracks (including children)
+    -- Get all selected tracks (including children and additional tracks)
     local all_tracks = {}
     for i = 0, reaper.CountSelectedTracks(0) - 1 do
         local track = reaper.GetSelectedTrack(0, i)
@@ -1818,9 +2280,9 @@ function SaveMCPSnapshot()
     -- Set Chunk in Snapshot[i][track]
     Snapshot[i].Chunk = {} 
     print("\n=== Saving MCP Snapshot ===")
-    for k , track in pairs(Snapshot[i].Tracks) do
+    for k, track in pairs(Snapshot[i].Tracks) do
         local _, track_name = reaper.GetTrackName(track)
-        print("Saving track: " .. track_name)
+        print("Saving track:", track_name)
         
         local retval, chunk = reaper.GetTrackStateChunk(track, '', false)
         if retval then
@@ -1828,7 +2290,7 @@ function SaveMCPSnapshot()
             Snapshot[i].Chunk[track] = chunk
         end
     end
-    print("Total tracks saved: " .. #Snapshot[i].Tracks)
+    print("Total tracks saved:", #Snapshot[i].Tracks)
     print("=== End Saving MCP Snapshot ===\n")
 
     -- Restore original selection
@@ -1849,7 +2311,35 @@ function SaveMCPSnapshot()
     TempRenamePopup = true
     TempPopup_i = i
     
+    -- Update the group's selected MCP snapshot and add to subGroups
+    print("\nUpdating group configuration:")
+    print("Group name:", group.name)
+    print("New snapshot name:", Snapshot[i].Name)
+    
+    group.selectedMCP = Snapshot[i].Name
+    if not group.subGroups then
+        print("Initializing subGroups structure")
+        group.subGroups = {
+            TCP = {},
+            MCP = {}
+        }
+    end
+    
+    -- Add to MCP subGroups array
+    print("Adding snapshot to MCP subGroups")
+    table.insert(group.subGroups.MCP, Snapshot[i].Name)
+    print("Current MCP snapshots:", table.concat(group.subGroups.MCP, ", "))
+    
+    -- Save both configs
+    print("\nSaving configurations")
     SaveSnapshotConfig()
+    SaveConfig()
+    
+    -- Force REAPER to refresh the mixer view
+    reaper.TrackList_AdjustWindows(false)
+    reaper.ThemeLayout_RefreshAll()
+    
+    print("=== End SaveMCPSnapshot Debug ===\n")
 end
 
 function GetFilteredConfig(filterType)
@@ -1868,6 +2358,9 @@ function GetFilteredConfig(filterType)
 end
 
 function SaveSnapshot(data)
+    print("\n=== SaveSnapshot Debug ===")
+    print("Creating new snapshot with data:", data.name)
+    
     -- Create a new snapshot with the provided data
     local newSnapshot = {
         Name = data.name,
@@ -1901,18 +2394,79 @@ function SaveSnapshot(data)
 
     -- Add the new snapshot to the Snapshot table
     table.insert(Snapshot, newSnapshot)
-    SaveSnapshotConfig()  -- Save to disk
-
-    -- Update the group's selected snapshot
+    
+    -- Update the group's selected snapshot and subGroups
     for _, group in ipairs(Configs.Groups) do
         if group.name == data.group then
             if data.subgroup == "TCP" then
                 group.selectedTCP = data.name
+                if not group.subGroups then
+                    group.subGroups = { TCP = {}, MCP = {} }
+                end
+                table.insert(group.subGroups.TCP, data.name)
             else
                 group.selectedMCP = data.name
+                if not group.subGroups then
+                    group.subGroups = { TCP = {}, MCP = {} }
+                end
+                table.insert(group.subGroups.MCP, data.name)
             end
             break
         end
     end
-    SaveConfig()  -- Save group configuration
+    
+    -- Save configurations
+    SaveSnapshotConfig()
+    SaveConfig()
+    
+    print("Snapshot created successfully")
+    print("=== End SaveSnapshot Debug ===\n")
+end
+
+-- Function to delete a specific group and its snapshots
+function DeleteGroup(groupName)
+    print("\n=== DeleteGroup Debug ===")
+    print("Deleting group:", groupName)
+    
+    -- Find the group index
+    local groupIndex = nil
+    for i, group in ipairs(Configs.Groups) do
+        if group.name == groupName then
+            groupIndex = i
+            break
+        end
+    end
+    
+    if not groupIndex then
+        print("Error: Group not found")
+        return false
+    end
+    
+    -- Remove snapshots associated with this group
+    local i = 1
+    while i <= #Snapshot do
+        if Snapshot[i] and Snapshot[i].Group == groupName then
+            print("Deleting snapshot:", Snapshot[i].Name)
+            table.remove(Snapshot, i)
+        else
+            i = i + 1
+        end
+    end
+    
+    -- Remove the group from Configs.Groups
+    table.remove(Configs.Groups, groupIndex)
+    
+    -- If the deleted group was the current group, reset current group
+    if Configs.CurrentGroup == groupName then
+        Configs.CurrentGroup = nil
+        Configs.CurrentSubGroup = "TCP"
+    end
+    
+    -- Save changes
+    SaveSnapshotConfig()
+    SaveConfig()
+    
+    print("Group deleted successfully")
+    print("=== End DeleteGroup Debug ===\n")
+    return true
 end

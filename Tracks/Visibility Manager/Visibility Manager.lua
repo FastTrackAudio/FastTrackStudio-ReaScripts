@@ -346,8 +346,8 @@ function loop()
 						if reaper.ImGui_Selectable(ctx, label, group.selectedTCP == snapshot.Name) then
 							group.selectedTCP = snapshot.Name
 							SaveConfig()
-							SoloSelect(item.index)
-							SetSnapshotFiltered(item.index, "TCP")
+							-- Use the new snapshot loading approach
+							HandleGroupActivation(group)
 						end
 						
 						-- Right-click menu for snapshot
@@ -360,9 +360,13 @@ function loop()
 								SaveSnapshotConfig()
 							end
 							if reaper.ImGui_MenuItem(ctx, "Load") then
-								SetSnapshotFiltered(item.index, "TCP")
 								group.selectedTCP = snapshot.Name
 								SaveConfig()
+								-- Use the new snapshot loading approach
+								HandleGroupActivation(group)
+							end
+							if reaper.ImGui_MenuItem(ctx, "Update Snapshot") then
+								OverwriteSnapshot(snapshot.Name)
 							end
 							if reaper.ImGui_MenuItem(ctx, "Delete") then
 								if group.selectedTCP == snapshot.Name then
@@ -516,8 +520,8 @@ function loop()
 						if reaper.ImGui_Selectable(ctx, label, group.selectedMCP == snapshot.Name) then
 							group.selectedMCP = snapshot.Name
 							SaveConfig()
-							SoloSelect(item.index)
-							SetSnapshotFiltered(item.index, "MCP")
+							-- Use the new snapshot loading approach
+							HandleGroupActivation(group)
 						end
 						
 						-- Right-click menu for snapshot
@@ -530,9 +534,13 @@ function loop()
 								SaveSnapshotConfig()
 							end
 							if reaper.ImGui_MenuItem(ctx, "Load") then
-								SetSnapshotFiltered(item.index, "MCP")
 								group.selectedMCP = snapshot.Name
 								SaveConfig()
+								-- Use the new snapshot loading approach
+								HandleGroupActivation(group)
+							end
+							if reaper.ImGui_MenuItem(ctx, "Update Snapshot") then
+								OverwriteSnapshot(snapshot.Name)
 							end
 							if reaper.ImGui_MenuItem(ctx, "Delete") then
 								if group.selectedMCP == snapshot.Name then
@@ -768,41 +776,56 @@ end
 
 function HandleGroupActivation(group)
 	print("\n=== HandleGroupActivation Debug ===")
-	print("Group:", group.name)
-	print("Active:", group.active)
-	print("View Mode:", Configs.ViewMode)
+	local start_time = reaper.time_precise()
 	
-	-- Save current track selection state ONCE at the start
+	-- Prevent UI updates and undo points for the entire operation
+	reaper.PreventUIRefresh(1)
+	reaper.Undo_BeginBlock()
+	
+	-- Save current selection state once at the beginning
 	reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
 	
-	-- Always hide tracks when deactivating a group
+	-- Get parent track once at the beginning and cache it
+	local parentTrack = GetParentTrackOfGroup(group)
+	local parentTracks = {}
+	if parentTrack then
+		parentTracks = GetParentTracks(parentTrack)
+	end
+	
+	-- Handle deactivation first
 	if not group.active then
-		print("Deactivating group - hiding all tracks in scope")
+		local hide_start = reaper.time_precise()
 		HideGroupTracks(group)
-		-- Restore original selection and refresh layouts
-		reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
-		reaper.ThemeLayout_RefreshAll()
+		print(string.format("HideGroupTracks took %.3f ms", (reaper.time_precise() - hide_start) * 1000))
+		
+		print(string.format("Total deactivation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
 		print("=== End HandleGroupActivation Debug ===\n")
 		return
 	end
 	
 	-- Handle activation based on view mode
 	if Configs.ViewMode == "Toggle" then
-		-- Show tracks and apply snapshots
+		-- Show tracks
+		local show_start = reaper.time_precise()
 		ShowGroupTracks(group)
-		ApplyGroupSnapshots(group)
+		print(string.format("ShowGroupTracks took %.3f ms", (reaper.time_precise() - show_start) * 1000))
 	elseif Configs.ViewMode == "Exclusive" then
 		-- Hide all tracks first
+		local hide_start = reaper.time_precise()
 		HideAllTracks()
+		print(string.format("HideAllTracks took %.3f ms", (reaper.time_precise() - hide_start) * 1000))
+		
 		-- Deactivate all other groups
 		for _, otherGroup in ipairs(Configs.Groups) do
 			if otherGroup ~= group then
 				otherGroup.active = false
 			end
 		end
-		-- Show tracks and apply snapshots for active group
+		
+		-- Show tracks for active group
+		local show_start = reaper.time_precise()
 		ShowGroupTracks(group)
-		ApplyGroupSnapshots(group)
+		print(string.format("ShowGroupTracks took %.3f ms", (reaper.time_precise() - show_start) * 1000))
 	elseif Configs.ViewMode == "LimitedExclusive" then
 		-- Deactivate all other groups
 		for _, otherGroup in ipairs(Configs.Groups) do
@@ -812,22 +835,24 @@ function HandleGroupActivation(group)
 		end
 		
 		-- Set all tracks to minimum height
+		local height_start = reaper.time_precise()
 		local allTracks = {}
 		for i = 0, reaper.CountTracks(0) - 1 do
 			table.insert(allTracks, reaper.GetTrack(0, i))
 		end
 		ShowTracksMinimumHeight(allTracks)
+		print(string.format("ShowTracksMinimumHeight took %.3f ms", (reaper.time_precise() - height_start) * 1000))
 		
 		-- Collapse all top-level tracks
+		local collapse_start = reaper.time_precise()
 		CollapseTopLevelTracks()
+		print(string.format("CollapseTopLevelTracks took %.3f ms", (reaper.time_precise() - collapse_start) * 1000))
 		
 		-- Get the parent track of the group
-		local parentTrack = GetParentTrackOfGroup(group)
 		if parentTrack then
 			print("Found group parent track")
 			
 			-- Get all parent tracks of the parent track
-			local parentTracks = GetParentTracks(parentTrack)
 			print("Found", #parentTracks, "additional parent tracks")
 			
 			-- Unfold all parent tracks in the hierarchy
@@ -849,16 +874,20 @@ function HandleGroupActivation(group)
 			reaper.Main_OnCommand(reaper.NamedCommandLookup("_RS7fb3d74a01cfeae229ad75b83192ca5086acbdbd"), 0) -- Scroll MCP to first selected track
 			reaper.Main_OnCommand(reaper.NamedCommandLookup("_RS9d2de0644134078c900c5baf59a2e900f1fe0c55"), 0) -- Scroll TCP vertically to first selected track
 		end
-		
-		-- Apply snapshots to the active group
-		ApplyGroupSnapshots(group)
 	end
+	
+	-- Apply snapshots only once at the end, after all track operations are complete
+	local snapshot_start = reaper.time_precise()
+	ApplyGroupSnapshots(group)
+	print(string.format("ApplyGroupSnapshots took %.3f ms", (reaper.time_precise() - snapshot_start) * 1000))
 	
 	-- Restore original track selection ONCE at the end
 	reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
 	
 	-- Force REAPER to refresh all layouts
 	reaper.ThemeLayout_RefreshAll()
+	
+	print(string.format("Total activation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
 	print("=== End HandleGroupActivation Debug ===\n")
 end
 

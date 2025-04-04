@@ -1,8 +1,19 @@
 -- @noindex
+
+-- Add timing debug function at the top
+function DebugTime(func_name, start_time)
+    local end_time = reaper.time_precise()
+    local duration = (end_time - start_time) * 1000 -- Convert to milliseconds
+    reaper.ShowConsoleMsg(string.format("[%s] took %.3f ms\n", func_name, duration))
+    return end_time
+end
+
 function bfut_ResetAllChunkGuids(item_chunk, key)
+    local start_time = reaper.time_precise()
     while item_chunk:match('%s('..key..')') do
         item_chunk = item_chunk:gsub('%s('..key..')%s+.-[\r]-[%\n]', "\ntemp%1 "..reaper.genGuid("").."\n", 1)
     end
+    DebugTime("bfut_ResetAllChunkGuids", start_time)
     return item_chunk:gsub('temp'..key, key), true
 end
 
@@ -22,8 +33,8 @@ function ResetChunkIndentifier(chunk, key)
     return chunk
 end
 
-
 function ResetAllIndentifiers(chunk) -- Tested in Tracks. 
+    local start_time = reaper.time_precise()
     -- Track
     chunk = ResetChunkIndentifier(chunk, 'TRACKID')
     chunk = ResetChunkIndentifier(chunk, 'FXID')
@@ -33,6 +44,7 @@ function ResetAllIndentifiers(chunk) -- Tested in Tracks.
     chunk = ResetChunkIndentifier(chunk, 'POOLEDEVTS')
     -- Envelopes
     chunk = ResetChunkIndentifier(chunk, 'EGUID')
+    DebugTime("ResetAllIndentifiers", start_time)
     return chunk
 end
 
@@ -135,21 +147,26 @@ function ChunkTableGetSection(chunk_lines,key) -- Thanks BirdBird! 🦜
  end
 
 function GetChunkSection(key, chunk)
+    local start_time = reaper.time_precise()
     local chunk_lines = split_by_line(chunk)
     local table_Section = ChunkTableGetSection(chunk_lines,key)
     local chunk_section = table.concat(table_Section)
+    DebugTime("GetChunkSection", start_time)
     return chunk_section
 end
   
 function RemoveChunkSection(key, chunk)
+    local start_time = reaper.time_precise()
     local chunk_lines = split_by_line(chunk)
     local table_Section = ChunkTableGetSection(chunk_lines,key)
     local old_chunk_Section = table.concat(table_Section)
     local chunk_without_key_Section = string.gsub(chunk,literalize(old_chunk_Section),'') -- Check if is there
+    DebugTime("RemoveChunkSection", start_time)
     return chunk_without_key_Section, old_chunk_Section -- new chunk, deleted part
 end
   
 function SwapChunkSection(key,chunk1,chunk2) -- Move Section (key) of chunk1 to chunk2  
+    local start_time = reaper.time_precise()
     local new_section = GetChunkSection(key, chunk1)
     local new_chunk, _ = RemoveChunkSection(key, chunk2)
     if key == 'AUXVOLENV' or key == 'AUXPANENV' or key == 'AUXMUTEENV' then -- keys that need to be at a specific position
@@ -157,6 +174,7 @@ function SwapChunkSection(key,chunk1,chunk2) -- Move Section (key) of chunk1 to 
     else
         new_chunk= AddSectionToChunk(new_chunk, new_section)
     end
+    DebugTime("SwapChunkSection", start_time)
     return new_chunk
 end
 
@@ -204,6 +222,7 @@ function HandleChunkValue(value, key)
 end
 
 function SwapChunkValue(key, chunk1, chunk2)
+    local start_time = reaper.time_precise()
     local line1 = chunk1:match(key .. " ([^\n]+)")
     local line2 = chunk2:match(key .. " ([^\n]+)")
     
@@ -255,19 +274,19 @@ function SwapChunkValue(key, chunk1, chunk2)
             end
         end
     end
+    DebugTime("SwapChunkValue", start_time)
     return chunk2
 end
 
 function SwapChunkValueSpecific(sourceChunk, targetChunk, key, indices)
-    print("\n=== SwapChunkValueSpecific Debug ===")
-    print("Key:", key)
-    print("Indices:", table.concat(indices, ", "))
+    local start_time = reaper.time_precise()
+
+   
     
     local sourceValue = sourceChunk:match(key .. " ([^\n]+)")
     local targetValue = targetChunk:match(key .. " ([^\n]+)")
     
-    print("\nSource Value:", sourceValue)
-    print("Target Value:", targetValue)
+   
     
     if sourceValue then
         if targetValue then
@@ -277,25 +296,21 @@ function SwapChunkValueSpecific(sourceChunk, targetChunk, key, indices)
                 local tcp, mcp = sourceValue:match('([^ ]+)%s+(.+)')
                 local targetTcp, targetMcp = targetValue:match('([^ ]+)%s+(.+)')
                 
-                print("\nSplit Values:")
-                print("Source TCP:", tcp)
-                print("Source MCP:", mcp)
-                print("Target TCP:", targetTcp)
-                print("Target MCP:", targetMcp)
+               
                 
                 -- Update only the specified indices, preserving the exact format
                 if indices[1] == 1 then  -- TCP is first (1)
                     targetTcp = tcp
-                    print("\nUpdating TCP value to:", targetTcp)
+                   
                 end
                 if indices[1] == 2 then  -- MCP is second (2)
                     targetMcp = mcp
-                    print("\nUpdating MCP value to:", targetMcp)
+                   
                 end
                 
                 -- Reconstruct the line with the exact values
                 local newValue = targetTcp .. " " .. targetMcp
-                print("\nNew Value:", newValue)
+               
                 
                 -- Escape % characters in the replacement string
                 newValue = newValue:gsub("%%", "%%%%")
@@ -324,15 +339,20 @@ function SwapChunkValueSpecific(sourceChunk, targetChunk, key, indices)
         end
     end
     
-    print("\n=== End SwapChunkValueSpecific Debug ===\n")
+
+    DebugTime("SwapChunkValueSpecific", start_time)
     return targetChunk
 end
 
 function AddSectionToChunk(chunk, section_chunk) -- Track Chunks
-    return string.gsub(chunk, '<TRACK', '<TRACK\n'..section_chunk) -- I think I need to literalize this ? 
+    local start_time = reaper.time_precise()
+    local result = string.gsub(chunk, '<TRACK', '<TRACK\n'..section_chunk) -- I think I need to literalize this ? 
+    DebugTime("AddSectionToChunk", start_time)
+    return result
 end
 
 function AddSectionToChunkAfterKey(after_key, new_chunk, new_section) -- If after_key haves a < like <ITEM them input in the string. Just this function haves it
+    local start_time = reaper.time_precise()
     local tab_chunk = split_by_line(new_chunk)
     local insert_point 
     for i, line in pairs(tab_chunk) do
@@ -348,10 +368,13 @@ function AddSectionToChunkAfterKey(after_key, new_chunk, new_section) -- If afte
         table.insert(tab_chunk, index, line) 
     end
 
-    return table.concat(tab_chunk,'\n')
+    local result = table.concat(tab_chunk,'\n')
+    DebugTime("AddSectionToChunkAfterKey", start_time)
+    return result
 end
 
 function GetSendChunk(chunk, send_idx) -- send_idx can be nil to get all send chunks
+    local start_time = reaper.time_precise()
     if not send_idx then 
         send_idx = ''
     end
@@ -360,10 +383,8 @@ function GetSendChunk(chunk, send_idx) -- send_idx can be nil to get all send ch
     local i = 0
     for send_chunk in string.gmatch(chunk,'AUXRECV '..send_idx..'.-\n') do
         while true do
-            --local next_line = string.match(chunk,literalize(send_chunk)..'(.-\n)')
             local next_line = match_n(chunk, literalize(send_chunk)..'(.-\n)', i)
             if string.match(next_line,'<AUX') then
-                --send_chunk = string.match(chunk, literalize(send_chunk)..literalize(next_line)..'.-\n>\n')
                 send_chunk = match_n(chunk, literalize(send_chunk)..literalize(next_line)..'.-\n>\n', i)
             else 
                 break
@@ -372,14 +393,13 @@ function GetSendChunk(chunk, send_idx) -- send_idx can be nil to get all send ch
         table.insert(chunk_table, send_chunk)
         i = i + 1
     end
+    DebugTime("GetSendChunk", start_time)
     return chunk_table
 end
 
 function SwapChunkValueInSection(section_key, param_key, chunk1, chunk2, indices, new_value)
-    print("\n=== SwapChunkValueInSection Debug ===")
-    print("Section Key:", section_key)
-    print("Parameter Key:", param_key)
-    print("Indices to update:", table.concat(indices, ", "))
+    local start_time = reaper.time_precise()
+    
     if new_value then
         print("New value to set:", new_value)
     end
@@ -388,18 +408,14 @@ function SwapChunkValueInSection(section_key, param_key, chunk1, chunk2, indices
     local section1 = GetChunkSection(section_key, chunk1)
     local section2 = GetChunkSection(section_key, chunk2)
     
-    print("\nSource Section:")
-    print(section1)
-    print("\nTarget Section:")
-    print(section2)
+   
     
     if section1 and section2 then
         -- Find the parameter line in both sections
         local line1 = section1:match(param_key .. " ([^\n]+)")
         local line2 = section2:match(param_key .. " ([^\n]+)")
         
-        print("\nSource Parameter Line:", line1)
-        print("Target Parameter Line:", line2)
+      
         
         if line1 or new_value then
             if line2 then
@@ -411,8 +427,7 @@ function SwapChunkValueInSection(section_key, param_key, chunk1, chunk2, indices
                 end
                 for v in line2:gmatch("%S+") do table.insert(values2, v) end
                 
-                print("\nSource Values:", table.concat(values1, ", "))
-                print("Target Values (before):", table.concat(values2, ", "))
+               
                 
                 if new_value then
                     -- If new_value is provided, use it instead of source values
@@ -429,11 +444,11 @@ function SwapChunkValueInSection(section_key, param_key, chunk1, chunk2, indices
                     end
                 end
                 
-                print("Target Values (after):", table.concat(values2, ", "))
+
                 
                 -- Reconstruct the line
                 local new_line = param_key .. " " .. table.concat(values2, " ")
-                print("\nNew Line:", new_line)
+      
                 
                 -- Replace the old line in section2
                 section2 = section2:gsub(param_key .. " [^\n]+", new_line)
@@ -442,10 +457,9 @@ function SwapChunkValueInSection(section_key, param_key, chunk1, chunk2, indices
                 local old_section = GetChunkSection(section_key, chunk2)
                 chunk2 = chunk2:gsub(literalize(old_section), section2)
                 
-                print("\nModified Section:")
-                print(section2)
+                
             else
-                print("\nParameter line not found in target section, adding it")
+              
                 -- If line exists in section1 but not in section2, add it
                 section2 = section2:gsub(">", param_key .. " " .. (new_value or line1) .. "\n>")
                 
@@ -453,18 +467,15 @@ function SwapChunkValueInSection(section_key, param_key, chunk1, chunk2, indices
                 local old_section = GetChunkSection(section_key, chunk2)
                 chunk2 = chunk2:gsub(literalize(old_section), section2)
                 
-                print("\nModified Section (with added line):")
-                print(section2)
+               
             end
         else
-            print("\nParameter line not found in source section")
+            
         end
     else
-        print("\nOne or both sections not found")
-        print("Section1 exists:", section1 ~= nil)
-        print("Section2 exists:", section2 ~= nil)
+       
     end
     
-    print("\n=== End SwapChunkValueInSection Debug ===\n")
+    DebugTime("SwapChunkValueInSection", start_time)
     return chunk2
 end
