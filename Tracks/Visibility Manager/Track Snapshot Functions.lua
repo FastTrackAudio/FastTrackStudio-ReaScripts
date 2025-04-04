@@ -137,7 +137,9 @@ function OverwriteSnapshot(snapshotName)
     
     -- Get the group from the snapshot
     local groupName = Snapshot[snapshotIndex].Group
+    local subGroup = Snapshot[snapshotIndex].SubGroup
     print("Found in group:", groupName)
+    print("SubGroup:", subGroup)
     
     -- Find the group in Configs
     local group = nil
@@ -163,13 +165,18 @@ function OverwriteSnapshot(snapshotName)
     -- Save current selection
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
     
-    -- Get all tracks in the group without modifying their state
+    -- Initialize all_tracks table
     local all_tracks = {}
     
-    -- Add parent track
-    table.insert(all_tracks, parentTrack)
+    -- First, deselect all tracks
+    reaper.Main_OnCommand(40297, 0) -- Track: Unselect all tracks
     
-    -- Add all children of the parent track
+    -- Select the parent track and all its children
+    reaper.SetTrackSelected(parentTrack, true)
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
+    
+    -- Add parent track and its children to all_tracks
+    table.insert(all_tracks, parentTrack)
     local childCount = reaper.CountTrackMediaItems(parentTrack)
     for i = 0, childCount - 1 do
         local childTrack = reaper.GetTrackMediaItem_Track(reaper.GetTrackMediaItem(parentTrack, i))
@@ -178,12 +185,36 @@ function OverwriteSnapshot(snapshotName)
         end
     end
     
-    -- Add any additional tracks from the group's scope
+    -- Add additional tracks from the group's scope
     if group.additionalTracks then
-        for _, trackGUID in ipairs(group.additionalTracks) do
-            local track = GetTrackByGUID(trackGUID)
+        for _, guid in ipairs(group.additionalTracks) do
+            local track = GetTrackByGUID(guid)
             if track then
-        table.insert(all_tracks, track)
+                reaper.SetTrackSelected(track, true)
+                table.insert(all_tracks, track)
+                
+                -- If this track is a parent track, also select its children
+                local depth = reaper.GetTrackDepth(track)
+                if depth >= 0 then
+                    -- Save current selection
+                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
+                    
+                    -- Select just this track and its children
+                    reaper.Main_OnCommand(40297, 0) -- Unselect all tracks
+                    reaper.SetTrackSelected(track, true)
+                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
+                    
+                    -- Get all selected tracks (including children)
+                    for j = 0, reaper.CountSelectedTracks(0) - 1 do
+                        local childTrack = reaper.GetSelectedTrack(0, j)
+                        if childTrack ~= track then -- Don't add the parent track again
+                            table.insert(all_tracks, childTrack)
+                        end
+                    end
+                    
+                    -- Merge with previous selection
+                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
+                end
             end
         end
     end
@@ -191,6 +222,10 @@ function OverwriteSnapshot(snapshotName)
     -- Update the snapshot with current track states
     Snapshot[snapshotIndex].Tracks = all_tracks
     Snapshot[snapshotIndex].Chunk = {}
+    
+    -- Always save vertical zoom
+    Snapshot[snapshotIndex].VerticalZoom = reaper.SNM_GetIntConfigVar("vzoom2", -1)
+    print("Saving vertical zoom:", Snapshot[snapshotIndex].VerticalZoom)
     
     print("\n=== Saving Tracks to Snapshot ===")
     for k, track in pairs(all_tracks) do
@@ -209,13 +244,26 @@ function OverwriteSnapshot(snapshotName)
     SaveSend(snapshotIndex)
     SaveReceive(snapshotIndex)
     
+    -- Update group's selected snapshot
+    if subGroup == "TCP" then
+        group.selectedTCP = snapshotName
+    elseif subGroup == "MCP" then
+        group.selectedMCP = snapshotName
+    end
+    
     -- Save the snapshot configuration
     SaveSnapshotConfig()
+    SaveConfig()
     
     -- Restore original selection
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
     
+    -- Force REAPER to refresh all layouts
+    reaper.TrackList_AdjustWindows(false)
+    reaper.ThemeLayout_RefreshAll()
+    
     print("Snapshot updated successfully")
+    print("=== End OverwriteSnapshot Debug ===\n")
 end
 
 function VersionModeOverwrite(i) -- i to check which tracks group is using
@@ -1660,6 +1708,21 @@ function ApplyGroupSnapshots(group)
         end
     end
     
+    -- Restore vertical zoom if in exclusive or limited exclusive mode and we have a TCP snapshot
+    if (Configs.ViewMode == "Exclusive" or Configs.ViewMode == "LimitedExclusive") and tcpSnapshot and tcpSnapshot.VerticalZoom then
+        local arrangeview = reaper.JS_Window_FindChildByID(reaper.GetMainHwnd(), 1000)
+        local ok, position, pageSize, min, max = reaper.JS_Window_GetScrollInfo(arrangeview, "v")
+        if ok then
+            local cur_size = reaper.SNM_GetIntConfigVar("vzoom2", -1)
+            if tcpSnapshot.VerticalZoom ~= cur_size then
+                reaper.SNM_SetIntConfigVar("vzoom2", tcpSnapshot.VerticalZoom)
+                reaper.TrackList_AdjustWindows(true)
+                reaper.JS_Window_SetScrollPos(arrangeview, "v", math.floor((position + pageSize/2)*
+                (({reaper.JS_Window_GetScrollInfo(arrangeview, "v")})[5] / max) - pageSize/2 + 0.5))
+            end
+        end
+    end
+    
     -- Restore original selection
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
     
@@ -2141,6 +2204,10 @@ function SaveTCPSnapshot()
     Snapshot[i].Group = Configs.CurrentGroup
     Snapshot[i].SubGroup = "TCP"  -- Mark as TCP snapshot
     Snapshot[i].Mode = "ALL"      -- Save all data
+
+    -- Save vertical zoom
+    Snapshot[i].VerticalZoom = reaper.SNM_GetIntConfigVar("vzoom2", -1)
+    print("Saving vertical zoom:", Snapshot[i].VerticalZoom)
 
     -- Set Chunk in Snapshot[i][track]
     Snapshot[i].Chunk = {} 
