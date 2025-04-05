@@ -164,7 +164,7 @@ function loop()
 				
 				-- Create an invisible button to limit the clickable area
 				local buttonColor = group.color or 0x4444FFFF
-				if group.active then
+				if group.active and not group.isGlobal then
 					local drawList = reaper.ImGui_GetWindowDrawList(ctx)
 					local buttonPosX, buttonPosY = reaper.ImGui_GetCursorScreenPos(ctx)
 					-- Extend the highlight to the full window width
@@ -183,6 +183,15 @@ function loop()
 					local _, rectMaxY = reaper.ImGui_GetItemRectMax(ctx)
 					local windowWidth = reaper.ImGui_GetWindowContentRegionMax(ctx)
 					reaper.ImGui_DrawList_AddRectFilled(drawList, rectMinX, rectMinY, rectMinX + windowWidth, rectMaxY, 0x3F3F3FFF)
+				end
+				
+				-- Draw momentary highlight for global groups when clicked
+				if group.isGlobal and isHovered and reaper.ImGui_IsMouseDown(ctx, 0) then
+					local drawList = reaper.ImGui_GetWindowDrawList(ctx)
+					local rectMinX, rectMinY = reaper.ImGui_GetItemRectMin(ctx)
+					local _, rectMaxY = reaper.ImGui_GetItemRectMax(ctx)
+					local windowWidth = reaper.ImGui_GetWindowContentRegionMax(ctx)
+					reaper.ImGui_DrawList_AddRectFilled(drawList, rectMinX, rectMinY, rectMinX + windowWidth, rectMaxY, buttonColor)
 				end
 				
 				-- Draw the text and icon
@@ -226,6 +235,14 @@ function loop()
 						SaveConfig()
 					end
 					reaper.ImGui_Separator(ctx)
+					
+					-- Add Rename Group option
+					if reaper.ImGui_MenuItem(ctx, "Rename Group") then
+						TempRenameGroupPopup = true
+						TempRenameGroupName = group.name
+						TempRenameGroupTarget = group
+						TempPopup_i = "RenameGroup"
+					end
 					
 					-- Add new menu item for adding selected tracks to group scope
 					if reaper.ImGui_MenuItem(ctx, "Add Selected Tracks to Group Scope") then
@@ -329,9 +346,15 @@ function loop()
 						-- Restore the original view mode
 						Configs.ViewMode = originalViewMode
 					else
-						-- Normal toggle behavior
-						group.active = not group.active
-						HandleGroupActivation(group)
+						-- For global groups, always activate without toggling
+						if group.isGlobal then
+							group.active = true
+							HandleGlobalGroupActivation(group)
+						else
+							-- Normal toggle behavior for non-global groups
+							group.active = not group.active
+							HandleGroupActivation(group)
+						end
 					end
 					SaveConfig()
 				end
@@ -418,8 +441,12 @@ function loop()
 						if reaper.ImGui_Selectable(ctx, label, group.selectedTCP == snapshot.Name) then
 							group.selectedTCP = snapshot.Name
 							SaveConfig()
-							-- Use the new snapshot loading approach
-							HandleGroupActivation(group)
+							-- Use the appropriate activation function based on group type
+							if group.isGlobal then
+								HandleGlobalGroupActivation(group)
+							else
+								HandleGroupActivation(group)
+							end
 						end
 						
 						-- Right-click menu for snapshot
@@ -434,8 +461,12 @@ function loop()
 							if reaper.ImGui_MenuItem(ctx, "Load") then
 								group.selectedTCP = snapshot.Name
 								SaveConfig()
-								-- Use the new snapshot loading approach
-								HandleGroupActivation(group)
+								-- Use the appropriate activation function based on group type
+								if group.isGlobal then
+									HandleGlobalGroupActivation(group)
+								else
+									HandleGroupActivation(group)
+								end
 							end
 							if reaper.ImGui_MenuItem(ctx, "Update Snapshot") then
 								OverwriteSnapshot(snapshot.Name)
@@ -589,8 +620,12 @@ function loop()
 						if reaper.ImGui_Selectable(ctx, label, group.selectedMCP == snapshot.Name) then
 							group.selectedMCP = snapshot.Name
 							SaveConfig()
-							-- Use the new snapshot loading approach
-							HandleGroupActivation(group)
+							-- Use the appropriate activation function based on group type
+							if group.isGlobal then
+								HandleGlobalGroupActivation(group)
+							else
+								HandleGroupActivation(group)
+							end
 						end
 						
 						-- Right-click menu for snapshot
@@ -605,8 +640,12 @@ function loop()
 							if reaper.ImGui_MenuItem(ctx, "Load") then
 								group.selectedMCP = snapshot.Name
 								SaveConfig()
-								-- Use the new snapshot loading approach
-								HandleGroupActivation(group)
+								-- Use the appropriate activation function based on group type
+								if group.isGlobal then
+									HandleGlobalGroupActivation(group)
+								else
+									HandleGroupActivation(group)
+								end
 							end
 							if reaper.ImGui_MenuItem(ctx, "Update Snapshot") then
 								OverwriteSnapshot(snapshot.Name)
@@ -733,8 +772,23 @@ function NewSnapshotNamePopup()
 				-- Set the current group to the one from TempPopupData
 				Configs.CurrentGroup = TempPopupData.group
 				
-				-- Call the appropriate snapshot function based on subgroup
-				if TempPopupData.subgroup == "TCP" then
+				-- Find the target group
+				local targetGroup = nil
+				for _, group in ipairs(Configs.Groups) do
+					if group.name == TempPopupData.group then
+						targetGroup = group
+						break
+					end
+				end
+				
+				-- Call the appropriate snapshot function based on group type and subgroup
+				if targetGroup and targetGroup.isGlobal then
+					-- For global snapshots, use the dedicated function
+					local success, message = SaveGlobalSnapshot()
+					if not success then
+						reaper.ShowMessageBox(message, "Error", 0)
+					end
+				elseif TempPopupData.subgroup == "TCP" then
 					SaveTCPSnapshot()
 				else
 					SaveMCPSnapshot()
@@ -764,8 +818,15 @@ function OpenPopups(popup_i)
 		if popup_i == "NewSnapshotName" then
 			BeginForcePreventShortcuts()
 			reaper.ImGui_OpenPopup(ctx, 'New Snapshot Name###NewSnapshotPopup')
+		elseif popup_i == "RenameGroup" then
+			BeginForcePreventShortcuts()
+			reaper.ImGui_OpenPopup(ctx, 'Rename Group###RenameGroupPopup')
+			if reaper.ImGui_IsWindowAppearing(ctx) then
+				TempRename_x, TempRename_y = reaper.GetMousePosition()
+			end
 		end
 		NewSnapshotNamePopup()
+		RenameGroupPopup()
 	end
 end
 
@@ -810,6 +871,43 @@ function ConfigsMenu()
 		if reaper.ImGui_MenuItem(ctx, 'Version Mode') then
 			Configs.VersionMode = not Configs.VersionMode
 			SaveConfig()
+		end
+		if reaper.ImGui_MenuItem(ctx, 'Debug Mode') then
+			Configs.DebugMode = not Configs.DebugMode
+			SaveConfig()
+		end
+		if reaper.ImGui_MenuItem(ctx, 'Create Global Snapshot') then
+			-- Find or create a global group
+			local globalGroup = nil
+			for _, group in ipairs(Configs.Groups) do
+				if group.isGlobal then
+					globalGroup = group
+					break
+				end
+			end
+			
+			if not globalGroup then
+				-- Create a new global group at the top
+				table.insert(Configs.Groups, 1, {
+					name = "Global View",
+					active = false,
+					color = 0x4444FFFF,  -- Default blue color
+					icon = "",  -- No icon by default
+					selectedTCP = nil,
+					selectedMCP = nil,
+					subGroups = {
+						TCP = {},
+						MCP = {}
+					},
+					isGlobal = true  -- Flag to identify this as a global group
+				})
+				globalGroup = Configs.Groups[1]
+				SaveConfig()
+			end
+			
+			TempPopup_i = "NewSnapshotName"
+			TempPopupData = {group = globalGroup.name, subgroup = "TCP"}
+			TempNewSnapshotName = ""
 		end
 		reaper.ImGui_Separator(ctx)
 		
@@ -958,6 +1056,96 @@ function HandleGroupActivation(group)
 	
 	DebugPrint(string.format("Total activation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
 	DebugPrint("=== End HandleGroupActivation Debug ===\n")
+end
+
+function RenameGroupPopup()
+	if not TempRenameGroupPopup then return end
+
+	-- Set popup position first time it runs 
+	if TempRename_x then
+		reaper.ImGui_SetNextWindowPos(ctx, TempRename_x-125, TempRename_y-30)
+	end
+
+	local popup_flags = reaper.ImGui_WindowFlags_AlwaysAutoResize()
+	if reaper.ImGui_BeginPopupModal(ctx, "Rename Group###RenameGroupPopup", nil, popup_flags) then
+		-- Colors
+		reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_FrameBg(),        0x2E2E2EFF)
+		reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(),         0xC8C8C83A)
+		reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_TextSelectedBg(), 0x68C5FE66)
+
+		-- Body
+		if reaper.ImGui_IsWindowAppearing(ctx) then -- First Run
+			reaper.ImGui_SetKeyboardFocusHere(ctx)
+		end
+
+		reaper.ImGui_Text(ctx, "Enter new group name:")
+		reaper.ImGui_PushItemWidth(ctx, 280)
+		local rv, temp = reaper.ImGui_InputText(ctx, "##newgroupname", TempRenameGroupName, reaper.ImGui_InputTextFlags_AutoSelectAll())
+		if rv then TempRenameGroupName = temp end
+		reaper.ImGui_PopItemWidth(ctx)
+		
+		if reaper.ImGui_Button(ctx, 'Save', 120, 0) or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Enter()) then
+			if TempRenameGroupName and TempRenameGroupName ~= "" then
+				-- Check if the new name already exists
+				local nameExists = false
+				for _, group in ipairs(Configs.Groups) do
+					if group.name == TempRenameGroupName and group ~= TempRenameGroupTarget then
+						nameExists = true
+						break
+					end
+				end
+				
+				if not nameExists then
+					-- Update group name
+					local oldName = TempRenameGroupTarget.name
+					TempRenameGroupTarget.name = TempRenameGroupName
+					
+					-- Update snapshots that reference this group
+					for _, snapshot in ipairs(Snapshot) do
+						if snapshot.Group == oldName then
+							snapshot.Group = TempRenameGroupName
+						end
+					end
+					
+					-- Update current group if it was the renamed one
+					if Configs.CurrentGroup == oldName then
+						Configs.CurrentGroup = TempRenameGroupName
+					end
+					
+					-- Save changes
+					SaveConfig()
+					SaveSnapshotConfig()
+					
+					-- Close popup
+					TempRenameGroupName = nil
+					TempRenameGroupTarget = nil
+					TempRenameGroupPopup = nil
+					TempPopup_i = nil
+					TempRename_x = nil
+					TempRename_y = nil
+					CloseForcePreventShortcuts()
+					reaper.ImGui_CloseCurrentPopup(ctx)
+				else
+					reaper.ShowMessageBox("A group with this name already exists.", "Error", 0)
+				end
+			end
+		end
+		
+		reaper.ImGui_SameLine(ctx)
+		if reaper.ImGui_Button(ctx, 'Cancel', 120, 0) or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Escape()) then
+			TempRenameGroupName = nil
+			TempRenameGroupTarget = nil
+			TempRenameGroupPopup = nil
+			TempPopup_i = nil
+			TempRename_x = nil
+			TempRename_y = nil
+			CloseForcePreventShortcuts()
+			reaper.ImGui_CloseCurrentPopup(ctx)
+		end
+
+		reaper.ImGui_PopStyleColor(ctx, 3)
+		reaper.ImGui_EndPopup(ctx)
+	end
 end
 
 Init()

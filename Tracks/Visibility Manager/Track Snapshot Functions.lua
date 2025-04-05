@@ -191,7 +191,7 @@ function OverwriteSnapshot(snapshotName)
             local track = GetTrackByGUID(guid)
             if track then
                 reaper.SetTrackSelected(track, true)
-                table.insert(all_tracks, track)
+        table.insert(all_tracks, track)
                 
                 -- If this track is a parent track, also select its children
                 local depth = reaper.GetTrackDepth(track)
@@ -1930,11 +1930,113 @@ function CollapseTopLevelTracks()
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
 end
 
--- Modified HandleGroupActivation function
+-- Function to handle global group activation
+function HandleGlobalGroupActivation(group)
+    DebugPrint("\n=== HandleGlobalGroupActivation Debug ===")
+    local start_time = reaper.time_precise()
+    
+    -- Save current selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
+    
+    -- Prevent UI updates
+    reaper.PreventUIRefresh(1)
+    
+    -- Deactivate all non-global groups
+    DebugPrint("Deactivating all non-global groups")
+    for _, otherGroup in ipairs(Configs.Groups) do
+        if not otherGroup.isGlobal and otherGroup.active then
+            DebugPrint("Deactivating group:", otherGroup.name)
+            otherGroup.active = false
+        end
+    end
+    
+    -- Always show all tracks when activating global snapshot
+    DebugPrint("Activating global snapshot - showing all tracks")
+    for i = 0, reaper.CountTracks(0) - 1 do
+        local track = reaper.GetTrack(0, i)
+        reaper.SetMediaTrackInfo_Value(track, "B_SHOWINTCP", 1)
+        reaper.SetMediaTrackInfo_Value(track, "B_SHOWINMIXER", 1)
+    end
+    
+    -- Apply snapshots if they exist
+    if group.selectedTCP or group.selectedMCP then
+        DebugPrint("Applying global snapshots")
+        ApplyGroupSnapshots(group)
+        
+        -- Find and restore vertical zoom from TCP snapshot
+        if group.selectedTCP then
+            for _, snapshot in ipairs(Snapshot) do
+                if snapshot.Group == group.name and snapshot.Name == group.selectedTCP then
+                    -- Get current zoom and scroll info before making changes
+                    local cur_size = reaper.SNM_GetIntConfigVar("vzoom2", -1)
+                    local arrangeview = reaper.JS_Window_FindChildByID(reaper.GetMainHwnd(), 1000)
+                    local ok, position, pageSize, min, max = reaper.JS_Window_GetScrollInfo(arrangeview, "v")
+                    
+                    -- Only proceed if we have valid scroll info
+                    if ok and arrangeview then
+                        -- If snapshot has a saved zoom value, use it, otherwise keep current
+                        local target_zoom = snapshot.VerticalZoom or cur_size
+                        
+                        -- Only change zoom if it's different
+                        if target_zoom ~= cur_size then
+                            DebugPrint("Restoring vertical zoom:", target_zoom)
+                            
+                            -- Set the new zoom value
+                            reaper.SNM_SetIntConfigVar("vzoom2", target_zoom)
+                            
+                            -- Adjust track list and wait for it to complete
+                            reaper.TrackList_AdjustWindows(true)
+                            reaper.UpdateTimeline()
+                            
+                            -- Get updated scroll info after zoom change
+                            local new_ok, new_position, new_pageSize, new_min, new_max = reaper.JS_Window_GetScrollInfo(arrangeview, "v")
+                            
+                            -- Calculate new scroll position while maintaining relative view
+                            if new_ok then
+                                local ratio = position / max
+                                local new_scroll_pos = math.floor(ratio * new_max)
+                                reaper.JS_Window_SetScrollPos(arrangeview, "v", new_scroll_pos)
+                            end
+                        end
+                    else
+                        DebugPrint("Warning: Could not get valid scroll info for vertical zoom restoration")
+                    end
+                    break
+                end
+            end
+        end
+    end
+    
+    -- Restore original selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
+    
+    -- Re-enable UI refresh and update layouts
+    reaper.PreventUIRefresh(-1)
+    reaper.TrackList_AdjustWindows(false)
+    reaper.ThemeLayout_RefreshAll()
+    
+    -- Reset the group's active state to false without triggering another activation
+    group.active = false
+    
+    DebugPrint(string.format("Total activation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
+    DebugPrint("=== End HandleGlobalGroupActivation Debug ===\n")
+end
+
+-- Main HandleGroupActivation function
 function HandleGroupActivation(group)
     DebugPrint("\n=== HandleGroupActivation Debug ===")
     local start_time = reaper.time_precise()
     
+    -- Check if this is a global group first
+    if group.isGlobal then
+        DebugPrint("Handling global group:", group.name)
+        -- For global groups, we don't toggle the active state
+        -- Just apply the snapshot and reset active state
+        HandleGlobalGroupActivation(group)
+        return
+    end
+    
+    -- For non-global groups, continue with normal toggle behavior
     -- Log initial selection count
     local initial_selection_count = reaper.CountSelectedTracks(0)
     DebugPrint("Initial selected tracks:", initial_selection_count)
@@ -2561,4 +2663,281 @@ function DeleteGroup(groupName)
     print("Group deleted successfully")
     print("=== End DeleteGroup Debug ===\n")
     return true
+end
+
+-- Function to create a global snapshot of all tracks in the project
+function CreateGlobalSnapshot()
+    DebugPrint("\n=== CreateGlobalSnapshot Debug ===")
+    local start_time = reaper.time_precise()
+    
+    -- Check if Global Snapshots group exists, if not create it
+    local globalGroup = nil
+    for _, group in ipairs(Configs.Groups) do
+        if group.name == "Global Snapshots" then
+            globalGroup = group
+            break
+        end
+    end
+    
+    if not globalGroup then
+        -- Create Global Snapshots group at the top of the list
+        table.insert(Configs.Groups, 1, {
+            name = "Global Snapshots",
+            active = false,
+            color = 0x4444FFFF,  -- Default blue color
+            icon = "",  -- No icon by default
+            selectedTCP = nil,
+            selectedMCP = nil
+        })
+        globalGroup = Configs.Groups[1]
+        DebugPrint("Created new Global Snapshots group")
+    end
+    
+    -- Get all tracks in the project
+    local allTracks = {}
+    local numTracks = reaper.CountTracks(0)
+    for i = 0, numTracks - 1 do
+        local track = reaper.GetTrack(0, i)
+        local _, trackName = reaper.GetTrackName(track)
+        local trackGUID = reaper.GetTrackGUID(track)
+        table.insert(allTracks, {
+            name = trackName,
+            guid = trackGUID,
+            track = track
+        })
+    end
+    
+    if #allTracks == 0 then
+        DebugPrint("No tracks found in project")
+        return false, "No tracks found in project"
+    end
+    
+    -- Create new snapshot entry
+    local newSnapshot = {
+        Name = "All Project Tracks",
+        Group = "Global Snapshots",
+        SubGroup = "TCP",
+        Tracks = allTracks,
+        icon = ""  -- No icon by default
+    }
+    
+    -- Save track states
+    for _, trackInfo in ipairs(allTracks) do
+        local track = trackInfo.track
+        local chunk = reaper.GetTrackStateChunk(track, "")
+        trackInfo.state = chunk
+    end
+    
+    -- Add snapshot to the beginning of the list
+    table.insert(Snapshot, 1, newSnapshot)
+    
+    -- Update selected TCP snapshot for the global group
+    globalGroup.selectedTCP = newSnapshot.Name
+    
+    -- Create MCP version of the snapshot
+    local mcpSnapshot = {
+        Name = "All Project Tracks",
+        Group = "Global Snapshots",
+        SubGroup = "MCP",
+        Tracks = allTracks,
+        icon = ""  -- No icon by default
+    }
+    
+    -- Save track states for MCP
+    for _, trackInfo in ipairs(allTracks) do
+        local track = trackInfo.track
+        local chunk = reaper.GetTrackStateChunk(track, "")
+        trackInfo.state = chunk
+    end
+    
+    -- Add MCP snapshot to the beginning of the list
+    table.insert(Snapshot, 2, mcpSnapshot)
+    
+    -- Update selected MCP snapshot for the global group
+    globalGroup.selectedMCP = mcpSnapshot.Name
+    
+    -- Save the snapshot configuration
+    SaveSnapshotConfig()
+    
+    -- Force REAPER to refresh all layouts
+    reaper.ThemeLayout_RefreshAll()
+    
+    DebugPrint(string.format("Total execution time: %.3f ms", (reaper.time_precise() - start_time) * 1000))
+    DebugPrint("=== End CreateGlobalSnapshot Debug ===\n")
+    
+    return true, "Global snapshot created successfully"
+end
+
+-- Function to save a global snapshot of all tracks
+function SaveGlobalSnapshot()
+    DebugPrint("\n=== SaveGlobalSnapshot Debug ===")
+    DebugPrint("Starting global snapshot creation...")
+    local start_time = reaper.time_precise()
+    
+    -- Check if a global group exists, if not create it
+    local globalGroup = nil
+    for _, group in ipairs(Configs.Groups) do
+        if group.isGlobal then
+            globalGroup = group
+            DebugPrint("Found existing global group:", group.name)
+            break
+        end
+    end
+    
+    if not globalGroup then
+        -- Create global group at the top of the list
+        table.insert(Configs.Groups, 1, {
+            name = "Global View",
+            active = false,
+            color = 0x4444FFFF,  -- Default blue color
+            icon = "",  -- No icon by default
+            selectedTCP = nil,
+            selectedMCP = nil,
+            subGroups = {
+                TCP = {},
+                MCP = {}
+            },
+            isGlobal = true  -- Flag to identify this as a global group
+        })
+        globalGroup = Configs.Groups[1]
+        DebugPrint("Created new global group: Global View")
+    end
+    
+    -- Save current selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
+    
+    -- Get all tracks in the project
+    local all_tracks = {}
+    local numTracks = reaper.CountTracks(0)
+    DebugPrint("Total tracks in project:", numTracks)
+    
+    for i = 0, numTracks - 1 do
+        local track = reaper.GetTrack(0, i)
+        if track then
+            table.insert(all_tracks, track)
+            local _, track_name = reaper.GetTrackName(track)
+            DebugPrint("Adding track to snapshot:", track_name)
+        end
+    end
+    
+    if #all_tracks == 0 then
+        DebugPrint("Error: No tracks found in project")
+        return false, "No tracks found in project"
+    end
+    
+    -- Create new snapshot entry
+    local i = #Snapshot + 1
+    local snapshotName = TempNewSnapshotName or "All Project Tracks"
+    DebugPrint("Creating new global snapshot:", snapshotName)
+    
+    Snapshot[i] = {
+        Name = snapshotName,
+        Group = globalGroup.name,
+        SubGroup = "TCP",
+        Tracks = all_tracks,
+        Chunk = {},
+        Mode = "ALL",
+        MissTrack = false,
+        Visible = true,
+        isGlobal = true  -- Flag to identify this as a global snapshot
+    }
+    
+    -- Save vertical zoom
+    Snapshot[i].VerticalZoom = reaper.SNM_GetIntConfigVar("vzoom2", -1)
+    DebugPrint("Saving vertical zoom:", Snapshot[i].VerticalZoom)
+    
+    -- Save track states
+    DebugPrint("\n=== Saving Track States ===")
+    local chunk_start_time = reaper.time_precise()
+    for _, track in ipairs(all_tracks) do
+        local _, track_name = reaper.GetTrackName(track)
+        DebugPrint("Saving track state:", track_name)
+        
+        local retval, chunk = reaper.GetTrackStateChunk(track, '', false)
+        if retval then
+            Snapshot[i].Chunk[track] = chunk
+        else
+            DebugPrint("Warning: Failed to get chunk for track:", track_name)
+        end
+    end
+    DebugPrint(string.format("Track state saving took %.3f ms", (reaper.time_precise() - chunk_start_time) * 1000))
+    DebugPrint("Total tracks saved:", #all_tracks)
+    
+    -- Restore original selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
+    
+    -- Update the group's selected TCP snapshot and add to subGroups
+    DebugPrint("\nUpdating group configuration:")
+    DebugPrint("Group name:", globalGroup.name)
+    DebugPrint("New snapshot name:", Snapshot[i].Name)
+    
+    globalGroup.selectedTCP = Snapshot[i].Name
+    if not globalGroup.subGroups then
+        DebugPrint("Initializing subGroups structure")
+        globalGroup.subGroups = {
+            TCP = {},
+            MCP = {}
+        }
+    end
+    
+    -- Add to TCP subGroups array
+    DebugPrint("Adding snapshot to TCP subGroups")
+    table.insert(globalGroup.subGroups.TCP, Snapshot[i].Name)
+    
+    -- Select the new snapshot
+    SoloSelect(i)
+    
+    -- Save both configs
+    DebugPrint("\nSaving configurations")
+    SaveSnapshotConfig()
+    SaveConfig()
+    
+    -- Force REAPER to refresh all layouts
+    reaper.TrackList_AdjustWindows(false)
+    reaper.ThemeLayout_RefreshAll()
+    
+    DebugPrint(string.format("Total snapshot creation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
+    DebugPrint("=== End SaveGlobalSnapshot Debug ===\n")
+    
+    return true, "Global snapshot created successfully"
+end
+
+-- Function to check if a snapshot is global
+function IsGlobalSnapshot(snapshot)
+    return snapshot and snapshot.isGlobal
+end
+
+-- Add debug logging to HandleGroupActivation for global groups
+local original_HandleGroupActivation = HandleGroupActivation
+function HandleGroupActivation(group)
+    if group.isGlobal then
+        DebugPrint("\n=== HandleGlobalGroupActivation Debug ===")
+        DebugPrint("Activating global group:", group.name)
+        DebugPrint("Group active state:", group.active and "true" or "false")
+        if group.selectedTCP then
+            DebugPrint("Selected TCP snapshot:", group.selectedTCP)
+        end
+        if group.selectedMCP then
+            DebugPrint("Selected MCP snapshot:", group.selectedMCP)
+        end
+    end
+    
+    -- Call original function
+    local result = original_HandleGroupActivation(group)
+    
+    if group.isGlobal then
+        DebugPrint("=== End HandleGlobalGroupActivation Debug ===\n")
+    end
+    
+    return result
+end
+
+-- Modified HandleGroupActivation to use custom handler for global groups
+local original_HandleGroupActivation = HandleGroupActivation
+function HandleGroupActivation(group)
+    if group.isGlobal then
+        return HandleGlobalGroupActivation(group)
+    else
+        return original_HandleGroupActivation(group)
+    end
 end
