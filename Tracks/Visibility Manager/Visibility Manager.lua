@@ -363,70 +363,70 @@ function loop()
 					local isAltHeld = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_ModAlt())
 					
 					-- Debug information about key state
-					print("\n=== KEY STATE DEBUG ===")
-					print("Shift key (IsKeyDown): " .. tostring(isShiftHeld))
-					print("Alt key (IsKeyDown): " .. tostring(isAltHeld))
-					print("Group: " .. group.name)
-					print("Group active: " .. tostring(group.active))
-					print("Group isGlobal: " .. tostring(group.isGlobal))
-					print("=== END KEY STATE DEBUG ===\n")
+					DebugPrint("\n=== KEY STATE DEBUG ===")
+					DebugPrint("Shift key (IsKeyDown): " .. tostring(isShiftHeld))
+					DebugPrint("Alt key (IsKeyDown): " .. tostring(isAltHeld))
+					DebugPrint("Group: " .. group.name)
+					DebugPrint("Group active: " .. tostring(group.active))
+					DebugPrint("Group isGlobal: " .. tostring(group.isGlobal))
+					DebugPrint("=== END KEY STATE DEBUG ===\n")
 					
 					if isShiftHeld then
-						print("\n=== SHIFT-CLICK ACTIVATION ===")
-						print("Shift key is held down, activating group: " .. group.name)
+						DebugPrint("\n=== SHIFT-CLICK ACTIVATION ===")
+						DebugPrint("Shift key is held down, activating group: " .. group.name)
 						
 						-- For shift-click, force exclusive mode behavior
 						-- First hide all tracks
-						print("Hiding all tracks...")
+						DebugPrint("Hiding all tracks...")
 						HideAllTracks()
 						
 						-- Deactivate all other groups
-						print("Deactivating all other groups...")
+						DebugPrint("Deactivating all other groups...")
 						for _, otherGroup in ipairs(Configs.Groups) do
 							if otherGroup ~= group then
-								print("  Deactivating group: " .. otherGroup.name)
+								DebugPrint("  Deactivating group: " .. otherGroup.name)
 								otherGroup.active = false
 							end
 						end
 						
 						-- Force the clicked group to be active
-						print("Forcing group to be active: " .. group.name)
+						DebugPrint("Forcing group to be active: " .. group.name)
 						group.active = true
 						
 						-- Apply the activation with shift key behavior
-						print("Applying group activation with shift key behavior...")
+						DebugPrint("Applying group activation with shift key behavior...")
 						HandleGroupActivation(group)
 						
 						-- Save config to persist the group active state
-						print("Saving config...")
+						DebugPrint("Saving config...")
 						SaveConfig()
-						print("=== END SHIFT-CLICK ACTIVATION ===\n")
+						DebugPrint("=== END SHIFT-CLICK ACTIVATION ===\n")
 					elseif isAltHeld then
-						print("\n=== ALT-CLICK ACTIVATION ===")
-						print("Alt key is held down, activating group: " .. group.name)
+						DebugPrint("\n=== ALT-CLICK ACTIVATION ===")
+						DebugPrint("Alt key is held down, activating group: " .. group.name)
 						
 						-- For alt-click, force limited exclusive mode behavior
 						-- Deactivate all other groups
-						print("Deactivating all other groups...")
+						DebugPrint("Deactivating all other groups...")
 						for _, otherGroup in ipairs(Configs.Groups) do
 							if otherGroup ~= group then
-								print("  Deactivating group: " .. otherGroup.name)
+								DebugPrint("  Deactivating group: " .. otherGroup.name)
 								otherGroup.active = false
 							end
 						end
 						
 						-- Force the clicked group to be active
-						print("Forcing group to be active: " .. group.name)
+						DebugPrint("Forcing group to be active: " .. group.name)
 						group.active = true
 						
 						-- Apply the activation with alt key behavior
-						print("Applying group activation with alt key behavior...")
+						DebugPrint("Applying group activation with alt key behavior...")
 						HandleGroupActivation(group)
 						
 						-- Save config to persist the group active state
-						print("Saving config...")
+						DebugPrint("Saving config...")
 						SaveConfig()
-						print("=== END ALT-CLICK ACTIVATION ===\n")
+						DebugPrint("=== END ALT-CLICK ACTIVATION ===\n")
 					else
 						-- For regular clicks, use normal toggle behavior
 						if group.isGlobal then
@@ -806,6 +806,7 @@ function loop()
 		OpenPopups(TempPopup_i)
 		NewGroupPopup()
 		IconSelectorPopup()
+		FindSnapshotPopup()
 		--------
 		reaper.ImGui_End(ctx)
 	end
@@ -911,6 +912,12 @@ function OpenPopups(popup_i)
 			if reaper.ImGui_IsWindowAppearing(ctx) then
 				TempRename_x, TempRename_y = reaper.GetMousePosition()
 			end
+		elseif popup_i == "FindSnapshot" then
+			BeginForcePreventShortcuts()
+			reaper.ImGui_OpenPopup(ctx, 'Select Snapshot By Name###FindSnapshotPopup')
+			if reaper.ImGui_IsWindowAppearing(ctx) then
+				TempRename_x, TempRename_y = reaper.GetMousePosition()
+			end
 		end
 		NewSnapshotNamePopup()
 		RenameGroupPopup()
@@ -1001,8 +1008,19 @@ function ConfigsMenu()
 		-- Group Management
 		if reaper.ImGui_BeginMenu(ctx, 'Group Management') then
 			if reaper.ImGui_MenuItem(ctx, 'Add Group') then
-				TempPopup_i = "AddGroup"
 				TempNewGroupName = ""
+				TempPopup_i = "AddGroup"
+				TempRename_x = reaper.ImGui_GetMousePos(ctx)
+				TempRename_y = reaper.ImGui_GetMousePos(ctx)
+				BeginForcePreventShortcuts()
+			end
+			if reaper.ImGui_MenuItem(ctx, 'Select Snapshot By Name') then
+				TempNewSnapshotName = ""
+				TempFindSnapshotType = "TCP"  -- Default to TCP
+				TempPopup_i = "FindSnapshot"
+				TempRename_x = reaper.ImGui_GetMousePos(ctx)
+				TempRename_y = reaper.ImGui_GetMousePos(ctx)
+				BeginForcePreventShortcuts()
 			end
 			if reaper.ImGui_MenuItem(ctx, 'Create Global Snapshot') then
 				-- Find or create a global group
@@ -1430,6 +1448,160 @@ function SaveAllGroupsSnapshotPopup()
 		reaper.ImGui_PopStyleColor(ctx, 3)
 		reaper.ImGui_EndPopup(ctx)
 	end
+end
+
+-- Function to find and select snapshots by name across all groups
+function FindAndSelectSnapshotByName(snapshotName, snapshotType)
+    DebugPrint("\n=== FindAndSelectSnapshotByName Debug ===")
+    DebugPrint("Looking for snapshot:", snapshotName)
+    DebugPrint("Snapshot type:", snapshotType)
+    
+    local foundCount = 0
+    local updatedCount = 0
+    
+    -- Iterate through all groups
+    for _, group in ipairs(Configs.Groups) do
+        DebugPrint("Checking group:", group.name)
+        
+        -- Skip global groups if they're not explicitly included
+        if group.isGlobal and snapshotType ~= "Both" then
+            DebugPrint("Skipping global group:", group.name)
+            goto continue
+        end
+        
+        -- Check TCP snapshots
+        if snapshotType == "TCP" or snapshotType == "Both" then
+            for i, snapshot in ipairs(Snapshot) do
+                if snapshot.Name == snapshotName and snapshot.Group == group.name and snapshot.SubGroup == "TCP" then
+                    DebugPrint("Found TCP snapshot in group:", group.name)
+                    group.selectedTCP = snapshotName
+                    foundCount = foundCount + 1
+                    updatedCount = updatedCount + 1
+                    
+                    -- Apply the snapshot if the group is active
+                    if group.active then
+                        if group.isGlobal then
+                            HandleGlobalGroupActivation(group)
+                        else
+                            HandleGroupActivation(group)
+                        end
+                    end
+                    break
+                end
+            end
+        end
+        
+        -- Check MCP snapshots
+        if snapshotType == "MCP" or snapshotType == "Both" then
+            for i, snapshot in ipairs(Snapshot) do
+                if snapshot.Name == snapshotName and snapshot.Group == group.name and snapshot.SubGroup == "MCP" then
+                    DebugPrint("Found MCP snapshot in group:", group.name)
+                    group.selectedMCP = snapshotName
+                    foundCount = foundCount + 1
+                    updatedCount = updatedCount + 1
+                    
+                    -- Apply the snapshot if the group is active
+                    if group.active then
+                        if group.isGlobal then
+                            HandleGlobalGroupActivation(group)
+                        else
+                            HandleGroupActivation(group)
+                        end
+                    end
+                    break
+                end
+            end
+        end
+        
+        ::continue::
+    end
+    
+    -- Save the configuration
+    SaveConfig()
+    
+    DebugPrint("Found", foundCount, "snapshots")
+    DebugPrint("Updated", updatedCount, "groups")
+    DebugPrint("=== End FindAndSelectSnapshotByName Debug ===\n")
+    
+    return foundCount, updatedCount
+end
+
+-- Function to show the Find Snapshot popup
+function FindSnapshotPopup()
+    if TempPopup_i ~= "FindSnapshot" then return end
+
+    -- Set popup position first time it runs 
+    if TempRename_x then
+        reaper.ImGui_SetNextWindowPos(ctx, TempRename_x-125, TempRename_y-30)
+    end
+
+    local popup_flags = reaper.ImGui_WindowFlags_AlwaysAutoResize()
+    if reaper.ImGui_BeginPopupModal(ctx, "Select Snapshot By Name###FindSnapshotPopup", nil, popup_flags) then
+        -- Colors
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_FrameBg(),        0x2E2E2EFF)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(),         0xC8C8C83A)
+        reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_TextSelectedBg(), 0x68C5FE66)
+
+        -- Body
+        if reaper.ImGui_IsWindowAppearing(ctx) then -- First Run
+            reaper.ImGui_SetKeyboardFocusHere(ctx)
+        end
+
+        reaper.ImGui_Text(ctx, "Enter snapshot name to find:")
+        reaper.ImGui_PushItemWidth(ctx, 280)
+        local rv, temp = reaper.ImGui_InputText(ctx, "##snapshotname", TempNewSnapshotName, reaper.ImGui_InputTextFlags_AutoSelectAll())
+        if rv then TempNewSnapshotName = temp end
+        reaper.ImGui_PopItemWidth(ctx)
+
+        reaper.ImGui_Text(ctx, "Snapshot type:")
+        if reaper.ImGui_RadioButton(ctx, "TCP Only", TempFindSnapshotType == "TCP") then
+            TempFindSnapshotType = "TCP"
+        end
+        reaper.ImGui_SameLine(ctx)
+        if reaper.ImGui_RadioButton(ctx, "MCP Only", TempFindSnapshotType == "MCP") then
+            TempFindSnapshotType = "MCP"
+        end
+        reaper.ImGui_SameLine(ctx)
+        if reaper.ImGui_RadioButton(ctx, "Both", TempFindSnapshotType == "Both") then
+            TempFindSnapshotType = "Both"
+        end
+        
+        if reaper.ImGui_Button(ctx, 'Select', 120, 0) or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Enter()) then
+            if TempNewSnapshotName and TempNewSnapshotName ~= "" then
+                local foundCount, updatedCount = FindAndSelectSnapshotByName(TempNewSnapshotName, TempFindSnapshotType)
+                
+                -- Show result message
+                if foundCount > 0 then
+                    reaper.ShowMessageBox(string.format("Found and selected %d snapshot(s) in %d group(s).", foundCount, updatedCount), "Select Snapshot By Name", 0)
+                else
+                    reaper.ShowMessageBox("No matching snapshots found.", "Select Snapshot By Name", 0)
+                end
+                
+                -- Close popup
+                TempNewSnapshotName = nil
+                TempFindSnapshotType = "TCP"  -- Reset to default
+                TempPopup_i = nil
+                TempRename_x = nil
+                TempRename_y = nil
+                CloseForcePreventShortcuts()
+                reaper.ImGui_CloseCurrentPopup(ctx)
+            end
+        end
+        
+        reaper.ImGui_SameLine(ctx)
+        if reaper.ImGui_Button(ctx, 'Cancel', 120, 0) or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Escape()) then
+            TempNewSnapshotName = nil
+            TempFindSnapshotType = "TCP"  -- Reset to default
+            TempPopup_i = nil
+            TempRename_x = nil
+            TempRename_y = nil
+            CloseForcePreventShortcuts()
+            reaper.ImGui_CloseCurrentPopup(ctx)
+        end
+
+        reaper.ImGui_PopStyleColor(ctx, 3)
+        reaper.ImGui_EndPopup(ctx)
+    end
 end
 
 Init()
