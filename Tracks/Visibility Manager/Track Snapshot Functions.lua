@@ -117,46 +117,49 @@ function SaveSnapshot() -- Set Snapshot table, Save State
     SaveSnapshotConfig()
 end
 
-function OverwriteSnapshot(snapshotName)
+function OverwriteSnapshot(snapshotName, groupName)
     DebugPrint("\n=== OverwriteSnapshot Debug ===")
     DebugPrint("Snapshot to overwrite:", snapshotName)
+    DebugPrint("Group:", groupName)
     
     -- Find the snapshot index
     local snapshotIndex = nil
+    local currentGroup = nil
+    
+    -- First, find the group
+    for _, g in ipairs(Configs.Groups) do
+        if g.name == groupName then
+            currentGroup = g
+            break
+        end
+    end
+    
+    if not currentGroup then
+        DebugPrint("Error: Could not find group:", groupName)
+        return
+    end
+    
+    -- Find the snapshot in this group
     for i, snapshot in ipairs(Snapshot) do
-        if snapshot.Name == snapshotName then
+        if snapshot.Name == snapshotName and snapshot.Group == groupName then
             snapshotIndex = i
             break
         end
     end
     
     if not snapshotIndex then
-        DebugPrint("Error: Could not find snapshot to overwrite")
+        DebugPrint("Error: Could not find snapshot", snapshotName, "in group", groupName)
         return
     end
+    
+    DebugPrint("Found snapshot in group:", currentGroup.name)
     
     -- Get the group from the snapshot
-    local groupName = Snapshot[snapshotIndex].Group
     local subGroup = Snapshot[snapshotIndex].SubGroup
-    DebugPrint("Found in group:", groupName)
     DebugPrint("SubGroup:", subGroup)
     
-    -- Find the group in Configs
-    local group = nil
-    for _, g in ipairs(Configs.Groups) do
-        if g.name == groupName then
-            group = g
-            break
-        end
-    end
-    
-    if not group then
-        DebugPrint("Error: Could not find group")
-        return
-    end
-    
     -- Get the parent track
-    local parentTrack = GetTrackByGUID(group.parentTrack)
+    local parentTrack = GetTrackByGUID(currentGroup.parentTrack)
     if not parentTrack then
         DebugPrint("Error: Could not find parent track")
         return
@@ -186,8 +189,8 @@ function OverwriteSnapshot(snapshotName)
     end
     
     -- Add additional tracks from the group's scope
-    if group.additionalTracks then
-        for _, guid in ipairs(group.additionalTracks) do
+    if currentGroup.additionalTracks then
+        for _, guid in ipairs(currentGroup.additionalTracks) do
             local track = GetTrackByGUID(guid)
             if track then
                 reaper.SetTrackSelected(track, true)
@@ -246,9 +249,9 @@ function OverwriteSnapshot(snapshotName)
     
     -- Update group's selected snapshot
     if subGroup == "TCP" then
-        group.selectedTCP = snapshotName
+        currentGroup.selectedTCP = snapshotName
     elseif subGroup == "MCP" then
-        group.selectedMCP = snapshotName
+        currentGroup.selectedMCP = snapshotName
     end
     
     -- Save the snapshot configuration
@@ -1590,12 +1593,39 @@ function HideGroupTracks(group)
         end
     end
     
+    -- Create a map of parent tracks that are needed by other active groups
+    local needed_parent_tracks = {}
+    for _, otherGroup in ipairs(Configs.Groups) do
+        if otherGroup ~= group and otherGroup.active then
+            -- Check if this group has the same parent track
+            local otherParentTrack = GetParentTrackOfGroup(otherGroup)
+            if otherParentTrack then
+                needed_parent_tracks[otherParentTrack] = true
+            end
+            
+            -- Check additional tracks in the group's scope
+            if otherGroup.additionalTracks then
+                for _, guid in ipairs(otherGroup.additionalTracks) do
+                    local track = GetTrackByGUID(guid)
+                    if track then
+                        needed_parent_tracks[track] = true
+                    end
+                end
+            end
+        end
+    end
+    
     -- Hide all tracks found without selecting them
     DebugPrint("\nHiding", #all_tracks, "tracks")
     for _, track in ipairs(all_tracks) do
-        -- Set both TCP and MCP visibility to 0
-        reaper.SetMediaTrackInfo_Value(track, "B_SHOWINMIXER", 0)  -- Hide in MCP
-        reaper.SetMediaTrackInfo_Value(track, "B_SHOWINTCP", 0)   -- Hide in TCP
+        -- Only hide parent tracks if they're not needed by other active groups
+        if not needed_parent_tracks[track] then
+            -- Set both TCP and MCP visibility to 0
+            reaper.SetMediaTrackInfo_Value(track, "B_SHOWINMIXER", 0)  -- Hide in MCP
+            reaper.SetMediaTrackInfo_Value(track, "B_SHOWINTCP", 0)   -- Hide in TCP
+        else
+            DebugPrint("Keeping parent track visible as it's needed by another active group")
+        end
     end
     DebugPrint("All tracks hidden")
     
@@ -2249,85 +2279,89 @@ function SaveTCPSnapshot()
     local _, parent_name = reaper.GetTrackName(parentTrack)
     print("Group parent track:", parent_name)
     
-    -- Save current selection for scope tracks
-    local selected_tracks = {}
-    for i = 0, reaper.CountSelectedTracks(0) - 1 do
-        local track = reaper.GetSelectedTrack(0, i)
-        table.insert(selected_tracks, track)
-    end
+    -- Save current selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
     
     -- First, deselect all tracks
     reaper.Main_OnCommand(40297, 0) -- Track: Unselect all tracks
     
-    -- Select the parent track and all its children
+    -- Get all tracks to save
+    local all_tracks = {}
+    
+    -- First, get the parent track and its children
+    print("\nProcessing parent track and children:")
     reaper.SetTrackSelected(parentTrack, true)
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
     
-    -- Add parent tracks of selected tracks to group scope
-    print("\nProcessing selected tracks for scope:")
-    for _, track in ipairs(selected_tracks) do
+    -- Get all selected tracks (parent and children)
+    local numSelected = reaper.CountSelectedTracks(0)
+    for i = 0, numSelected - 1 do
+        local track = reaper.GetSelectedTrack(0, i)
+        if track then
         local _, track_name = reaper.GetTrackName(track)
-        print("\nChecking parents for selected track:", track_name)
-        
-        local parents = GetParentTracks(track)
-        for _, parent in ipairs(parents) do
-            local _, parent_name = reaper.GetTrackName(parent)
-            print("Adding parent to scope:", parent_name)
-            AddTrackToGroupScope(group.name, parent)
+            print("Adding track:", track_name)
+            table.insert(all_tracks, track)
         end
     end
     
-    -- Add additional tracks from the group's scope
-    print("\nProcessing additional tracks from group scope:")
-    if group.additionalTracks then
-        for _, guid in ipairs(group.additionalTracks) do
-            local track = GetTrackByGUID(guid)
+    -- Now find all parent tracks of the parent track
+    print("\nFinding parent tracks:")
+    local currentTrack = parentTrack
+    local currentDepth = reaper.GetTrackDepth(currentTrack)
+    local numTracks = reaper.CountTracks(0)
+    
+    -- Walk up the track hierarchy
+    while currentDepth > 0 do
+        local foundParent = false
+        -- Find the parent track by looking at the track before the current track
+        for i = 0, numTracks - 1 do
+            local track = reaper.GetTrack(0, i)
             if track then
-                local _, track_name = reaper.GetTrackName(track)
-                print("Adding scope track:", track_name)
-                reaper.SetTrackSelected(track, true)
+                local trackDepth = reaper.GetTrackDepth(track)
                 
-                -- If this track is a parent track, also select its children
-                local depth = reaper.GetTrackDepth(track)
-                if depth >= 0 then
-                    print("Track is a parent, adding its children")
-                    -- Save current selection
-                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
-                    
-                    -- Select just this track and its children
-                    reaper.Main_OnCommand(40297, 0) -- Unselect all tracks
-                    reaper.SetTrackSelected(track, true)
-                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
-                    
-                    -- Merge with previous selection
-                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
+                -- If this track is at a higher level (lower depth) than our current track
+                if trackDepth < currentDepth then
+                    -- Check if the next track is our current track
+                    if i + 1 < numTracks then
+                        local nextTrack = reaper.GetTrack(0, i + 1)
+                        if nextTrack == currentTrack then
+                            local _, track_name = reaper.GetTrackName(track)
+                            print("Found parent track:", track_name)
+                            table.insert(all_tracks, track)
+                            currentTrack = track
+                            currentDepth = trackDepth
+                            foundParent = true
+                            break
+                        end
                 end
             end
         end
     end
     
-    -- Get all selected tracks (including children and additional tracks)
-    local all_tracks = {}
-    for i = 0, reaper.CountSelectedTracks(0) - 1 do
-        local track = reaper.GetSelectedTrack(0, i)
-        table.insert(all_tracks, track)
+        -- If we didn't find a parent, break to prevent infinite loop
+        if not foundParent then
+            print("No more parent tracks found")
+            break
+        end
     end
     
-    local i = #Snapshot+1
-    Snapshot[i] = {}
-    Snapshot[i].Tracks = all_tracks
-    Snapshot[i].Group = Configs.CurrentGroup
-    Snapshot[i].SubGroup = "TCP"  -- Mark as TCP snapshot
-    Snapshot[i].Mode = "ALL"      -- Save all data
+    -- Create new snapshot
+    local i = #Snapshot + 1
+    Snapshot[i] = {
+        Tracks = all_tracks,
+        Group = Configs.CurrentGroup,
+        SubGroup = "TCP",
+        Mode = "ALL",
+        Chunk = {}
+    }
 
     -- Save vertical zoom
     Snapshot[i].VerticalZoom = reaper.SNM_GetIntConfigVar("vzoom2", -1)
     print("Saving vertical zoom:", Snapshot[i].VerticalZoom)
 
     -- Set Chunk in Snapshot[i][track]
-    Snapshot[i].Chunk = {} 
     print("\n=== Saving Tracks to Snapshot ===")
-    for k, track in pairs(Snapshot[i].Tracks) do
+    for _, track in ipairs(Snapshot[i].Tracks) do
         local _, track_name = reaper.GetTrackName(track)
         print("Saving track:", track_name)
         
@@ -2381,7 +2415,7 @@ function SaveTCPSnapshot()
     SaveSnapshotConfig()
     SaveConfig()
     
-    -- Force REAPER to refresh the mixer view
+    -- Force REAPER to refresh the track view
     reaper.TrackList_AdjustWindows(false)
     reaper.ThemeLayout_RefreshAll()
     
@@ -2424,25 +2458,36 @@ function SaveMCPSnapshot()
     
     -- Select the parent track and all its children
     reaper.SetTrackSelected(parentTrack, true)
-    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
+        reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
     
-    -- Add additional tracks from the group's scope
+    -- Get all selected tracks (including children)
+    local all_tracks = {}
+    for i = 0, reaper.CountSelectedTracks(0) - 1 do
+        local track = reaper.GetSelectedTrack(0, i)
+        table.insert(all_tracks, track)
+    end
+    
+    -- Add any additional tracks from the group's scope
+    print("\nProcessing additional tracks from group scope:")
     if group.additionalTracks then
         for _, guid in ipairs(group.additionalTracks) do
             local track = GetTrackByGUID(guid)
             if track then
+                local _, track_name = reaper.GetTrackName(track)
+                print("Adding scope track:", track_name)
                 reaper.SetTrackSelected(track, true)
                 
                 -- If this track is a parent track, also select its children
                 local depth = reaper.GetTrackDepth(track)
                 if depth >= 0 then
+                    print("Track is a parent, adding its children")
                     -- Save current selection
                     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
                     
                     -- Select just this track and its children
                     reaper.Main_OnCommand(40297, 0) -- Unselect all tracks
-        reaper.SetTrackSelected(track, true)
-        reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
+                    reaper.SetTrackSelected(track, true)
+                    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SELCHILDREN2"), 0)
                     
                     -- Merge with previous selection
                     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
@@ -2452,7 +2497,7 @@ function SaveMCPSnapshot()
     end
     
     -- Get all selected tracks (including children and additional tracks)
-    local all_tracks = {}
+    all_tracks = {}
     for i = 0, reaper.CountSelectedTracks(0) - 1 do
         local track = reaper.GetSelectedTrack(0, i)
         table.insert(all_tracks, track)
@@ -2907,7 +2952,7 @@ function IsGlobalSnapshot(snapshot)
     return snapshot and snapshot.isGlobal
 end
 
--- Add debug logging to HandleGroupActivation for global groups
+-- Modified HandleGroupActivation to use custom handler for global groups
 local original_HandleGroupActivation = HandleGroupActivation
 function HandleGroupActivation(group)
     if group.isGlobal then
@@ -2920,24 +2965,249 @@ function HandleGroupActivation(group)
         if group.selectedMCP then
             DebugPrint("Selected MCP snapshot:", group.selectedMCP)
         end
-    end
-    
-    -- Call original function
-    local result = original_HandleGroupActivation(group)
-    
-    if group.isGlobal then
+        
+        local result = HandleGlobalGroupActivation(group)
+        
         DebugPrint("=== End HandleGlobalGroupActivation Debug ===\n")
-    end
-    
-    return result
-end
-
--- Modified HandleGroupActivation to use custom handler for global groups
-local original_HandleGroupActivation = HandleGroupActivation
-function HandleGroupActivation(group)
-    if group.isGlobal then
-        return HandleGlobalGroupActivation(group)
+        return result
     else
         return original_HandleGroupActivation(group)
     end
+end
+
+-- Function to change a group's parent track
+function ChangeGroupParentTrack(group, newParentTrack)
+    DebugPrint("\n=== ChangeGroupParentTrack Debug ===")
+    DebugPrint("Group:", group.name)
+    
+    if not newParentTrack then
+        DebugPrint("No new parent track provided")
+        return false, "No track selected"
+    end
+    
+    -- Get the track's GUID
+    local newParentGUID = reaper.GetTrackGUID(newParentTrack)
+    if not newParentGUID then
+        DebugPrint("Could not get GUID for new parent track")
+        return false, "Invalid track"
+    end
+    
+    -- Update the group's parent track
+    group.parentTrack = newParentGUID
+    
+    -- Get all parent tracks of the new parent track
+    local parentTracks = GetParentTracks(newParentTrack)
+    
+    -- Update additionalTracks to include all parent tracks
+    group.additionalTracks = {}
+    for _, track in ipairs(parentTracks) do
+        local trackGUID = reaper.GetTrackGUID(track)
+        if trackGUID then
+            table.insert(group.additionalTracks, trackGUID)
+        end
+    end
+    
+    -- Save the updated configuration
+    SaveConfig()
+    
+    DebugPrint("Parent track changed successfully")
+    DebugPrint("=== End ChangeGroupParentTrack Debug ===\n")
+    return true, "Parent track changed successfully"
+end
+
+function ResetGroupScope(group)
+    DebugPrint("\n=== ResetGroupScope Debug ===")
+    DebugPrint("Resetting scope for group:", group.name)
+    
+    -- Get the parent track
+    local parentTrack = GetTrackByGUID(group.parentTrack)
+    if not parentTrack then
+        DebugPrint("Error: Could not find parent track")
+        return false, "Could not find parent track"
+    end
+    
+    -- Initialize new scope with just the parent track
+    local newScope = {group.parentTrack}
+    
+    -- Add all children of the parent track
+    local childCount = reaper.CountTrackMediaItems(parentTrack)
+    for i = 0, childCount - 1 do
+        local childTrack = reaper.GetTrackMediaItem_Track(reaper.GetTrackMediaItem(parentTrack, i))
+        if childTrack and childTrack ~= parentTrack then
+            local childGUID = reaper.GetTrackGUID(childTrack)
+            table.insert(newScope, childGUID)
+        end
+    end
+    
+    -- Update the group's scope
+    group.additionalTracks = newScope
+    
+    -- Save the configuration
+    SaveConfig()
+    
+    DebugPrint("Group scope reset successfully")
+    DebugPrint("New scope contains", #newScope, "tracks")
+    DebugPrint("=== End ResetGroupScope Debug ===\n")
+    
+    return true
+end
+
+-- Function to reset all group scopes
+function ResetAllGroupScopes()
+    DebugPrint("\n=== ResetAllGroupScopes Debug ===")
+    local successCount = 0
+    local failCount = 0
+    
+    for _, group in ipairs(Configs.Groups) do
+        DebugPrint("Resetting scope for group:", group.name)
+        
+        -- Skip global groups
+        if group.isGlobal then
+            DebugPrint("Skipping global group:", group.name)
+            goto continue
+        end
+        
+        -- Skip groups without a parent track
+        if not group.parentTrack then
+            DebugPrint("Skipping group (no parent track):", group.name)
+            failCount = failCount + 1
+            goto continue
+        end
+        
+        -- Get the parent track
+        local parentTrack = GetTrackByGUID(group.parentTrack)
+        if not parentTrack then
+            DebugPrint("Failed to find parent track for group:", group.name)
+            failCount = failCount + 1
+            goto continue
+        end
+        
+        -- Initialize new scope with just the parent track
+        local newScope = {group.parentTrack}
+        
+        -- Add all children of the parent track
+        local childCount = reaper.CountTrackMediaItems(parentTrack)
+        for i = 0, childCount - 1 do
+            local item = reaper.GetTrackMediaItem(parentTrack, i)
+            local take = reaper.GetActiveTake(item)
+            if take then
+                local track = reaper.GetMediaItemTake_Track(take)
+                if track then
+                    local trackGUID = reaper.GetTrackGUID(track)
+                    table.insert(newScope, trackGUID)
+                end
+            end
+        end
+        
+        -- Update the group's scope
+        group.additionalTracks = newScope
+        DebugPrint("Successfully reset scope for group:", group.name)
+        successCount = successCount + 1
+        
+        ::continue::
+    end
+    
+    -- Save the configuration
+    SaveConfig()
+    
+    DebugPrint("Reset complete. Success:", successCount, "Failed:", failCount)
+    DebugPrint("=== End ResetAllGroupScopes Debug ===\n")
+    
+    return successCount, failCount
+end
+
+-- Function to delete all snapshots from all groups
+function DeleteAllSnapshots()
+    DebugPrint("\n=== DeleteAllSnapshots Debug ===")
+    local snapshotCount = 0
+    
+    -- Iterate through all groups
+    for _, group in ipairs(Configs.Groups) do
+        DebugPrint("Processing group:", group.name)
+        
+        -- Skip global groups
+        if group.isGlobal then
+            DebugPrint("Skipping global group:", group.name)
+            goto continue
+        end
+        
+        -- Delete snapshots for this group from the Snapshot table
+        local i = 1
+        while i <= #Snapshot do
+            if Snapshot[i] and Snapshot[i].Group == group.name then
+                DebugPrint("Deleting snapshot:", Snapshot[i].Name)
+                table.remove(Snapshot, i)
+                snapshotCount = snapshotCount + 1
+            else
+                i = i + 1
+            end
+        end
+        
+        -- Reset group's selected snapshots
+        group.selectedTCP = nil
+        group.selectedMCP = nil
+        
+        -- Clear TCP and MCP subGroups if they exist
+        if group.subGroups then
+            if group.subGroups.TCP then
+                group.subGroups.TCP = {}
+            end
+            if group.subGroups.MCP then
+                group.subGroups.MCP = {}
+            end
+        end
+        
+        ::continue::
+    end
+    
+    -- Save the configuration
+    SaveSnapshotConfig()
+    SaveConfig()
+    
+    DebugPrint("Deleted", snapshotCount, "snapshots (excluding global snapshots)")
+    DebugPrint("=== End DeleteAllSnapshots Debug ===\n")
+    
+    return snapshotCount
+end
+
+-- Function to show and unfold all tracks in both TCP and MCP
+function ShowAndUnfoldAllTracks()
+    DebugPrint("\n=== ShowAndUnfoldAllTracks Debug ===")
+    local start_time = reaper.time_precise()
+    
+    -- Save current selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_SAVESEL"), 0)
+    
+    -- Get all tracks in the project
+    local all_tracks = {}
+    local numTracks = reaper.CountTracks(0)
+    DebugPrint("Total tracks in project:", numTracks)
+    
+    for i = 0, numTracks - 1 do
+        local track = reaper.GetTrack(0, i)
+        if track then
+            table.insert(all_tracks, track)
+            local _, track_name = reaper.GetTrackName(track)
+            DebugPrint("Processing track:", track_name)
+            
+            -- Show track in both TCP and MCP
+            reaper.SetMediaTrackInfo_Value(track, "B_SHOWINTCP", 1)
+            reaper.SetMediaTrackInfo_Value(track, "B_SHOWINMIXER", 1)
+            
+            -- Unfold track (0 = unfolded, 1 = compact, 2 = collapsed)
+            reaper.SetMediaTrackInfo_Value(track, "I_FOLDERCOMPACT", 0)
+        end
+    end
+    
+    -- Restore original selection
+    reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
+    
+    -- Force REAPER to refresh all layouts
+    reaper.TrackList_AdjustWindows(false)
+    reaper.ThemeLayout_RefreshAll()
+    
+    DebugPrint(string.format("Total execution time: %.3f ms", (reaper.time_precise() - start_time) * 1000))
+    DebugPrint("=== End ShowAndUnfoldAllTracks Debug ===\n")
+    
+    return #all_tracks
 end

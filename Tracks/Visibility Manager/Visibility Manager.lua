@@ -172,6 +172,7 @@ function loop()
 					reaper.ImGui_DrawList_AddRectFilled(drawList, buttonPosX, buttonPosY, buttonPosX + windowWidth, buttonPosY + 20, buttonColor)
 				end
 				
+				-- Create the button
 				reaper.ImGui_InvisibleButton(ctx, "##spacer" .. group.name, groupWidth, 20)
 				local isHovered = reaper.ImGui_IsItemHovered(ctx)
 				local isClicked = reaper.ImGui_IsItemClicked(ctx)
@@ -254,6 +255,47 @@ function loop()
 						end
 					end
 					
+					-- Add Change Parent Track option
+					reaper.ImGui_Separator(ctx)
+					
+					-- Get current parent track name
+					local currentParentTrack = GetParentTrackOfGroup(group)
+					local parentTrackName = "None"
+					if currentParentTrack then
+						_, parentTrackName = reaper.GetTrackName(currentParentTrack)
+					end
+					
+					-- Show current parent track name
+					reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0x888888FF)  -- Muted gray color
+					reaper.ImGui_Text(ctx, "Current Parent: " .. parentTrackName)
+					reaper.ImGui_PopStyleColor(ctx)
+					
+					-- Add option to change parent track
+					if reaper.ImGui_MenuItem(ctx, "Change Parent Track") then
+						-- Get currently selected track
+						local selectedTrack = reaper.GetSelectedTrack(0, 0)
+						if selectedTrack then
+							local success, msg = ChangeGroupParentTrack(group, selectedTrack)
+							if success then
+								print(string.format("\nChanged parent track for group '%s'", group.name))
+							else
+								print("\nFailed to change parent track:", msg)
+							end
+						else
+							print("\nNo track selected. Please select a track first.")
+						end
+					end
+					
+					-- Add Reset Group Scope option
+					if reaper.ImGui_MenuItem(ctx, "Reset Group Scope") then
+						local success = ResetGroupScope(group)
+						if success then
+							print(string.format("\nReset scope for group '%s' to parent track and children only", group.name))
+						else
+							print("\nFailed to reset group scope")
+						end
+					end
+					
 					-- Add Move Up/Down options
 					reaper.ImGui_Separator(ctx)
 					
@@ -313,50 +355,89 @@ function loop()
 				end
 				
 				if isClicked then
-					-- Check if shift is held down
-					local isShiftHeld = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_LeftShift()) or reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_RightShift())
+					-- Get key codes
+					local keycodes = KeyCodeList()
+					
+					-- Check key state at click time using the same method as PassThorugh
+					local isShiftHeld = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_ModShift())
+					local isAltHeld = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_ModAlt())
+					
+					-- Debug information about key state
+					print("\n=== KEY STATE DEBUG ===")
+					print("Shift key (IsKeyDown): " .. tostring(isShiftHeld))
+					print("Alt key (IsKeyDown): " .. tostring(isAltHeld))
+					print("Group: " .. group.name)
+					print("Group active: " .. tostring(group.active))
+					print("Group isGlobal: " .. tostring(group.isGlobal))
+					print("=== END KEY STATE DEBUG ===\n")
 					
 					if isShiftHeld then
-						-- If shift is held, force exclusive mode regardless of config
-						-- First deactivate all groups
+						print("\n=== SHIFT-CLICK ACTIVATION ===")
+						print("Shift key is held down, activating group: " .. group.name)
+						
+						-- For shift-click, force exclusive mode behavior
+						-- First hide all tracks
+						print("Hiding all tracks...")
+						HideAllTracks()
+						
+						-- Deactivate all other groups
+						print("Deactivating all other groups...")
 						for _, otherGroup in ipairs(Configs.Groups) do
 							if otherGroup ~= group then
+								print("  Deactivating group: " .. otherGroup.name)
 								otherGroup.active = false
 							end
 						end
 						
-						-- If the group was already active, deactivate it first
-						if group.active then
-							group.active = false
-							HandleGroupActivation(group)
-						end
-						
-						-- Then activate the clicked group
+						-- Force the clicked group to be active
+						print("Forcing group to be active: " .. group.name)
 						group.active = true
 						
-						-- Temporarily save the current view mode
-						local originalViewMode = Configs.ViewMode
-						
-						-- Force exclusive mode for this activation
-						Configs.ViewMode = "Exclusive"
-						
-						-- Activate the group with exclusive mode
+						-- Apply the activation with shift key behavior
+						print("Applying group activation with shift key behavior...")
 						HandleGroupActivation(group)
 						
-						-- Restore the original view mode
-						Configs.ViewMode = originalViewMode
+						-- Save config to persist the group active state
+						print("Saving config...")
+						SaveConfig()
+						print("=== END SHIFT-CLICK ACTIVATION ===\n")
+					elseif isAltHeld then
+						print("\n=== ALT-CLICK ACTIVATION ===")
+						print("Alt key is held down, activating group: " .. group.name)
+						
+						-- For alt-click, force limited exclusive mode behavior
+						-- Deactivate all other groups
+						print("Deactivating all other groups...")
+						for _, otherGroup in ipairs(Configs.Groups) do
+							if otherGroup ~= group then
+								print("  Deactivating group: " .. otherGroup.name)
+								otherGroup.active = false
+							end
+						end
+						
+						-- Force the clicked group to be active
+						print("Forcing group to be active: " .. group.name)
+						group.active = true
+						
+						-- Apply the activation with alt key behavior
+						print("Applying group activation with alt key behavior...")
+						HandleGroupActivation(group)
+						
+						-- Save config to persist the group active state
+						print("Saving config...")
+						SaveConfig()
+						print("=== END ALT-CLICK ACTIVATION ===\n")
 					else
-						-- For global groups, always activate without toggling
+						-- For regular clicks, use normal toggle behavior
 						if group.isGlobal then
 							group.active = true
 							HandleGlobalGroupActivation(group)
 						else
-							-- Normal toggle behavior for non-global groups
 							group.active = not group.active
 							HandleGroupActivation(group)
 						end
+						SaveConfig()
 					end
-					SaveConfig()
 				end
 				reaper.ImGui_EndGroup(ctx)
 				
@@ -469,7 +550,7 @@ function loop()
 								end
 							end
 							if reaper.ImGui_MenuItem(ctx, "Update Snapshot") then
-								OverwriteSnapshot(snapshot.Name)
+								OverwriteSnapshot(snapshot.Name, group.name)
 							end
 							if reaper.ImGui_MenuItem(ctx, "Delete") then
 								if group.selectedTCP == snapshot.Name then
@@ -648,7 +729,7 @@ function loop()
 								end
 							end
 							if reaper.ImGui_MenuItem(ctx, "Update Snapshot") then
-								OverwriteSnapshot(snapshot.Name)
+								OverwriteSnapshot(snapshot.Name, group.name)
 							end
 							if reaper.ImGui_MenuItem(ctx, "Delete") then
 								if group.selectedMCP == snapshot.Name then
@@ -824,9 +905,16 @@ function OpenPopups(popup_i)
 			if reaper.ImGui_IsWindowAppearing(ctx) then
 				TempRename_x, TempRename_y = reaper.GetMousePosition()
 			end
+		elseif popup_i == "SaveAllGroupsSnapshot" then
+			BeginForcePreventShortcuts()
+			reaper.ImGui_OpenPopup(ctx, 'Save Snapshot for All Groups###SaveAllGroupsPopup')
+			if reaper.ImGui_IsWindowAppearing(ctx) then
+				TempRename_x, TempRename_y = reaper.GetMousePosition()
+			end
 		end
 		NewSnapshotNamePopup()
 		RenameGroupPopup()
+		SaveAllGroupsSnapshotPopup()
 	end
 end
 
@@ -844,16 +932,27 @@ end
 
 function ConfigsMenu()
 	if reaper.ImGui_BeginMenu(ctx, 'Configs') then
+		-- Display Settings
+		if reaper.ImGui_BeginMenu(ctx, 'Display Settings') then
 		if reaper.ImGui_MenuItem(ctx, 'Show All Snapshots') then
 			Configs.ShowAll = not Configs.ShowAll
 			SaveConfig()
 		end
-		if reaper.ImGui_MenuItem(ctx, 'Prevent Shortcuts') then
-			Configs.PreventShortcut = not Configs.PreventShortcut
-			SaveConfig()
-		end
 		if reaper.ImGui_MenuItem(ctx, 'Show ToolTips') then
 			Configs.ToolTips = not Configs.ToolTips
+			SaveConfig()
+		end
+			if reaper.ImGui_MenuItem(ctx, 'Show Last Snapshot Loaded') then
+				Configs.Select = not Configs.Select
+				SaveConfig()
+			end
+			reaper.ImGui_EndMenu(ctx)
+		end
+		
+		-- Behavior Settings
+		if reaper.ImGui_BeginMenu(ctx, 'Behavior Settings') then
+			if reaper.ImGui_MenuItem(ctx, 'Prevent Shortcuts') then
+				Configs.PreventShortcut = not Configs.PreventShortcut
 			SaveConfig()
 		end
 		if reaper.ImGui_MenuItem(ctx, 'Prompt Name') then
@@ -864,52 +963,8 @@ function ConfigsMenu()
 			Configs.AutoDeleteAI = not Configs.AutoDeleteAI
 			SaveConfig()
 		end
-		if reaper.ImGui_MenuItem(ctx, 'Show Last Snapshot Loaded') then
-			Configs.Select = not Configs.Select
-			SaveConfig()
+			reaper.ImGui_EndMenu(ctx)
 		end
-		if reaper.ImGui_MenuItem(ctx, 'Version Mode') then
-			Configs.VersionMode = not Configs.VersionMode
-			SaveConfig()
-		end
-		if reaper.ImGui_MenuItem(ctx, 'Debug Mode') then
-			Configs.DebugMode = not Configs.DebugMode
-			SaveConfig()
-		end
-		if reaper.ImGui_MenuItem(ctx, 'Create Global Snapshot') then
-			-- Find or create a global group
-			local globalGroup = nil
-			for _, group in ipairs(Configs.Groups) do
-				if group.isGlobal then
-					globalGroup = group
-					break
-				end
-			end
-			
-			if not globalGroup then
-				-- Create a new global group at the top
-				table.insert(Configs.Groups, 1, {
-					name = "Global View",
-					active = false,
-					color = 0x4444FFFF,  -- Default blue color
-					icon = "",  -- No icon by default
-					selectedTCP = nil,
-					selectedMCP = nil,
-					subGroups = {
-						TCP = {},
-						MCP = {}
-					},
-					isGlobal = true  -- Flag to identify this as a global group
-				})
-				globalGroup = Configs.Groups[1]
-				SaveConfig()
-			end
-			
-			TempPopup_i = "NewSnapshotName"
-			TempPopupData = {group = globalGroup.name, subgroup = "TCP"}
-			TempNewSnapshotName = ""
-		end
-		reaper.ImGui_Separator(ctx)
 		
 		-- View Mode submenu
 		if reaper.ImGui_BeginMenu(ctx, 'View Mode') then
@@ -928,15 +983,116 @@ function ConfigsMenu()
 			reaper.ImGui_EndMenu(ctx)
 		end
 		
+		-- Development Settings
+		if reaper.ImGui_BeginMenu(ctx, 'Development') then
+			if reaper.ImGui_MenuItem(ctx, 'Version Mode') then
+				Configs.VersionMode = not Configs.VersionMode
+				SaveConfig()
+			end
+			if reaper.ImGui_MenuItem(ctx, 'Debug Mode') then
+				Configs.DebugMode = not Configs.DebugMode
+				SaveConfig()
+			end
+			reaper.ImGui_EndMenu(ctx)
+		end
+		
 		reaper.ImGui_Separator(ctx)
+		
+		-- Group Management
+		if reaper.ImGui_BeginMenu(ctx, 'Group Management') then
+			if reaper.ImGui_MenuItem(ctx, 'Add Group') then
+				TempPopup_i = "AddGroup"
+				TempNewGroupName = ""
+			end
+			if reaper.ImGui_MenuItem(ctx, 'Create Global Snapshot') then
+				-- Find or create a global group
+				local globalGroup = nil
+				for _, group in ipairs(Configs.Groups) do
+					if group.isGlobal then
+						globalGroup = group
+						break
+					end
+				end
+				
+				if not globalGroup then
+					-- Create a new global group at the top
+					table.insert(Configs.Groups, 1, {
+						name = "Global View",
+						active = false,
+						color = 0x4444FFFF,  -- Default blue color
+						icon = "",  -- No icon by default
+						selectedTCP = nil,
+						selectedMCP = nil,
+						subGroups = {
+							TCP = {},
+							MCP = {}
+						},
+						isGlobal = true  -- Flag to identify this as a global group
+					})
+					globalGroup = Configs.Groups[1]
+					SaveConfig()
+				end
+				
+				TempPopup_i = "NewSnapshotName"
+				TempPopupData = {group = globalGroup.name, subgroup = "TCP"}
+				TempNewSnapshotName = ""
+			end
+			if reaper.ImGui_MenuItem(ctx, 'Save Snapshot for All Groups') then
+				TempPopup_i = "SaveAllGroupsSnapshot"
+				TempNewSnapshotName = ""
+				TempSaveAllGroupsType = "Both" -- Can be "TCP", "MCP", or "Both"
+				TempSaveAllGroupsIcon = "" -- Default empty icon
+			end
+			if reaper.ImGui_MenuItem(ctx, 'Reset All Group Scopes') then
+				if reaper.ShowMessageBox("This will reset all group scopes to their default state (parent track and direct children only). This action cannot be undone. Continue?", "Reset All Group Scopes", 4) == 6 then
+					ResetAllGroupScopes()
+					reaper.ShowMessageBox("Successfully reset all group scopes.", "Reset All Group Scopes", 0)
+				end
+			end
+			reaper.ImGui_EndMenu(ctx)
+		end
+		
+		-- Track Management
+		if reaper.ImGui_BeginMenu(ctx, 'Track Management') then
+			if reaper.ImGui_MenuItem(ctx, 'Show and Unfold All Tracks') then
+				ShowAndUnfoldAllTracks()
+			end
+			reaper.ImGui_EndMenu(ctx)
+		end
+		
+		-- DANGER ZONE submenu
+		if reaper.ImGui_BeginMenu(ctx, 'DANGER ZONE') then
+			if reaper.ImGui_MenuItem(ctx, 'Delete All Snapshots') then
+				if reaper.ShowMessageBox("This will delete all snapshots from all non-global groups. Groups and their settings will be preserved, and global snapshots will not be affected. This action cannot be undone. Continue?", "Delete All Snapshots", 4) == 6 then
+					local snapshotCount = DeleteAllSnapshots()
+					reaper.ShowMessageBox(string.format("Successfully deleted %d snapshots from non-global groups.", snapshotCount), "Delete All Snapshots", 0)
+				end
+			end
+			
+			-- REAL DANGER ZONE submenu
+			if reaper.ImGui_BeginMenu(ctx, 'REAL DANGER ZONE') then
 		if reaper.ImGui_MenuItem(ctx, 'Delete All Groups') then
-			if reaper.ShowMessageBox("This will delete all groups (except Default) and their snapshots. This action cannot be undone. Continue?", "Delete All Groups", 4) == 6 then
+					if reaper.ShowMessageBox("This will delete all groups and their snapshots. This action cannot be undone. Continue?", "Delete All Groups", 4) == 6 then
 				DeleteAllGroups()
+						reaper.ShowMessageBox("Successfully deleted all groups and their snapshots.", "Delete All Groups", 0)
 			end
 		end
+				reaper.ImGui_EndMenu(ctx)
+			end
+			
+			reaper.ImGui_EndMenu(ctx)
+		end
+		
+		reaper.ImGui_Separator(ctx)
+		
+		-- System
+		if reaper.ImGui_BeginMenu(ctx, 'System') then
 		if reaper.ImGui_MenuItem(ctx, 'Refresh Configs') then
 			RefreshConfigs()
 		end
+			reaper.ImGui_EndMenu(ctx)
+		end
+		
 		reaper.ImGui_EndMenu(ctx)
 	end
 end
@@ -944,6 +1100,17 @@ end
 function HandleGroupActivation(group)
 	DebugPrint("\n=== HandleGroupActivation Debug ===")
 	local start_time = reaper.time_precise()
+	
+	-- Get key codes
+	local keycodes = KeyCodeList()
+	
+	-- Check if shift key is held down using the same method as PassThorugh
+	local isShiftHeld = reaper.ImGui_IsKeyDown(ctx, reaper.ImGui_Key_ModShift())
+	DebugPrint("Shift key state: " .. tostring(isShiftHeld))
+	
+	-- Determine if we should use exclusive mode behavior
+	local useExclusiveMode = Configs.ViewMode == "Exclusive" or isShiftHeld
+	DebugPrint("Using exclusive mode: " .. tostring(useExclusiveMode) .. " (Config: " .. Configs.ViewMode .. ", Shift: " .. tostring(isShiftHeld) .. ")")
 	
 	-- Prevent UI updates and undo points for the entire operation
 	reaper.PreventUIRefresh(1)
@@ -967,16 +1134,23 @@ function HandleGroupActivation(group)
 		
 		DebugPrint(string.format("Total deactivation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
 		DebugPrint("=== End HandleGroupActivation Debug ===\n")
+		
 		return
 	end
 	
-	-- Handle activation based on view mode
-	if Configs.ViewMode == "Toggle" then
+	-- Handle activation based on view mode or shift key
+	if Configs.ViewMode == "Toggle" and not isShiftHeld then
 		-- Show tracks
 		local show_start = reaper.time_precise()
 		ShowGroupTracks(group)
 		DebugPrint(string.format("ShowGroupTracks took %.3f ms", (reaper.time_precise() - show_start) * 1000))
-	elseif Configs.ViewMode == "Exclusive" then
+		
+		-- Select the parent track for scrolling
+		if parentTrack then
+			reaper.Main_OnCommand(40297, 0) -- Track: Unselect all tracks
+			reaper.SetTrackSelected(parentTrack, true)
+		end
+	elseif useExclusiveMode then
 		-- Hide all tracks first
 		local hide_start = reaper.time_precise()
 		HideAllTracks()
@@ -993,6 +1167,12 @@ function HandleGroupActivation(group)
 		local show_start = reaper.time_precise()
 		ShowGroupTracks(group)
 		DebugPrint(string.format("ShowGroupTracks took %.3f ms", (reaper.time_precise() - show_start) * 1000))
+		
+		-- Select the parent track for scrolling
+		if parentTrack then
+			reaper.Main_OnCommand(40297, 0) -- Track: Unselect all tracks
+			reaper.SetTrackSelected(parentTrack, true)
+		end
 	elseif Configs.ViewMode == "LimitedExclusive" then
 		-- Deactivate all other groups
 		for _, otherGroup in ipairs(Configs.Groups) do
@@ -1036,10 +1216,6 @@ function HandleGroupActivation(group)
 			-- Deselect all tracks and select only the parent
 			reaper.Main_OnCommand(40297, 0) -- Track: Unselect all tracks
 			reaper.SetTrackSelected(parentTrack, true)
-			
-			-- Scroll MCP and TCP to show the parent track
-			reaper.Main_OnCommand(reaper.NamedCommandLookup("_RS7fb3d74a01cfeae229ad75b83192ca5086acbdbd"), 0) -- Scroll MCP to first selected track
-			reaper.Main_OnCommand(reaper.NamedCommandLookup("_RS9d2de0644134078c900c5baf59a2e900f1fe0c55"), 0) -- Scroll TCP vertically to first selected track
 		end
 	end
 	
@@ -1047,6 +1223,15 @@ function HandleGroupActivation(group)
 	local snapshot_start = reaper.time_precise()
 	ApplyGroupSnapshots(group)
 	DebugPrint(string.format("ApplyGroupSnapshots took %.3f ms", (reaper.time_precise() - snapshot_start) * 1000))
+	
+	-- Scroll TCP and MCP to the selected track before restoring selection
+	if parentTrack and reaper.IsTrackSelected(parentTrack) then
+		-- Scroll TCP to the selected track
+		reaper.Main_OnCommand(reaper.NamedCommandLookup("_RS9d2de0644134078c900c5baf59a2e900f1fe0c55"), 0) -- Scroll TCP vertically to first selected track
+		
+		-- Scroll MCP to the selected track
+		reaper.Main_OnCommand(reaper.NamedCommandLookup("_RS7fb3d74a01cfeae229ad75b83192ca5086acbdbd"), 0) -- Scroll MCP to first selected track
+	end
 	
 	-- Restore original track selection ONCE at the end
 	reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)
@@ -1136,6 +1321,105 @@ function RenameGroupPopup()
 			TempRenameGroupName = nil
 			TempRenameGroupTarget = nil
 			TempRenameGroupPopup = nil
+			TempPopup_i = nil
+			TempRename_x = nil
+			TempRename_y = nil
+			CloseForcePreventShortcuts()
+			reaper.ImGui_CloseCurrentPopup(ctx)
+		end
+
+		reaper.ImGui_PopStyleColor(ctx, 3)
+		reaper.ImGui_EndPopup(ctx)
+	end
+end
+
+function SaveAllGroupsSnapshotPopup()
+	if TempPopup_i ~= "SaveAllGroupsSnapshot" then return end
+
+	-- Set popup position first time it runs 
+	if TempRename_x then
+		reaper.ImGui_SetNextWindowPos(ctx, TempRename_x-125, TempRename_y-30)
+	end
+
+	local popup_flags = reaper.ImGui_WindowFlags_AlwaysAutoResize()
+	if reaper.ImGui_BeginPopupModal(ctx, "Save Snapshot for All Groups###SaveAllGroupsPopup", nil, popup_flags) then
+		-- Colors
+		reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_FrameBg(),        0x2E2E2EFF)
+		reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(),         0xC8C8C83A)
+		reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_TextSelectedBg(), 0x68C5FE66)
+
+		-- Body
+		if reaper.ImGui_IsWindowAppearing(ctx) then -- First Run
+			reaper.ImGui_SetKeyboardFocusHere(ctx)
+		end
+
+		reaper.ImGui_Text(ctx, "Enter snapshot name:")
+		reaper.ImGui_PushItemWidth(ctx, 280)
+		local rv, temp = reaper.ImGui_InputText(ctx, "##snapshotname", TempNewSnapshotName, reaper.ImGui_InputTextFlags_AutoSelectAll())
+		if rv then TempNewSnapshotName = temp end
+		reaper.ImGui_PopItemWidth(ctx)
+
+		reaper.ImGui_Text(ctx, "Snapshot type:")
+		if reaper.ImGui_RadioButton(ctx, "TCP Only", TempSaveAllGroupsType == "TCP") then
+			TempSaveAllGroupsType = "TCP"
+		end
+		reaper.ImGui_SameLine(ctx)
+		if reaper.ImGui_RadioButton(ctx, "MCP Only", TempSaveAllGroupsType == "MCP") then
+			TempSaveAllGroupsType = "MCP"
+		end
+		reaper.ImGui_SameLine(ctx)
+		if reaper.ImGui_RadioButton(ctx, "Both", TempSaveAllGroupsType == "Both") then
+			TempSaveAllGroupsType = "Both"
+		end
+		
+		-- Icon selection
+		reaper.ImGui_Text(ctx, "Select icon:")
+		reaper.ImGui_PushItemWidth(ctx, 280)
+		local rv, temp = reaper.ImGui_InputText(ctx, "##snapshoticon", TempSaveAllGroupsIcon, reaper.ImGui_InputTextFlags_AutoSelectAll())
+		if rv then TempSaveAllGroupsIcon = temp end
+		reaper.ImGui_PopItemWidth(ctx)
+		reaper.ImGui_Text(ctx, "Enter an emoji or icon name (e.g., 📁, 🎵, 🎸)")
+		
+		if reaper.ImGui_Button(ctx, 'Save', 120, 0) or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Enter()) then
+			if TempNewSnapshotName and TempNewSnapshotName ~= "" then
+				-- Save snapshots for all groups
+				for _, group in ipairs(Configs.Groups) do
+					if not group.isGlobal then -- Skip global groups
+						Configs.CurrentGroup = group.name
+						
+						if TempSaveAllGroupsType == "TCP" or TempSaveAllGroupsType == "Both" then
+							TempPopupData = {group = group.name, subgroup = "TCP"}
+							TempNewSnapshotName = TempNewSnapshotName
+							TempNewSnapshotIcon = TempSaveAllGroupsIcon
+							SaveTCPSnapshot()
+						end
+						
+						if TempSaveAllGroupsType == "MCP" or TempSaveAllGroupsType == "Both" then
+							TempPopupData = {group = group.name, subgroup = "MCP"}
+							TempNewSnapshotName = TempNewSnapshotName
+							TempNewSnapshotIcon = TempSaveAllGroupsIcon
+							SaveMCPSnapshot()
+						end
+					end
+				end
+				
+				-- Close popup
+				TempNewSnapshotName = nil
+				TempSaveAllGroupsType = nil
+				TempSaveAllGroupsIcon = nil
+				TempPopup_i = nil
+				TempRename_x = nil
+				TempRename_y = nil
+				CloseForcePreventShortcuts()
+				reaper.ImGui_CloseCurrentPopup(ctx)
+			end
+		end
+		
+		reaper.ImGui_SameLine(ctx)
+		if reaper.ImGui_Button(ctx, 'Cancel', 120, 0) or reaper.ImGui_IsKeyPressed(ctx, reaper.ImGui_Key_Escape()) then
+			TempNewSnapshotName = nil
+			TempSaveAllGroupsType = nil
+			TempSaveAllGroupsIcon = nil
 			TempPopup_i = nil
 			TempRename_x = nil
 			TempRename_y = nil
