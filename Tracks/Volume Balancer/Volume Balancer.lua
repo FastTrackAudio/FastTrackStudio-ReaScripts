@@ -23,7 +23,9 @@ local Configs = {
     LastReportTime = 0,   -- Last time values were reported
     NudgeAmount = 1.0,    -- Default nudge amount in dB
     AutoNudgeAmount = true, -- Whether to automatically set nudge amount based on group size
-    DebugMode = false     -- Whether to enable debug printing
+    DebugMode = false,    -- Whether to enable debug printing
+    BackgroundMode = false, -- Whether to run in background when UI is closed
+    BackgroundRunning = false -- Whether background mode is currently active
 }
 
 -- Initialize ReaImGui
@@ -143,6 +145,8 @@ function LoadConfigs()
         if loaded.ReportValues == nil then loaded.ReportValues = false end
         if loaded.LastReportTime == nil then loaded.LastReportTime = 0 end
         if loaded.DebugMode == nil then loaded.DebugMode = false end
+        if loaded.BackgroundMode == nil then loaded.BackgroundMode = false end
+        if loaded.BackgroundRunning == nil then loaded.BackgroundRunning = false end
         
         Configs = loaded
     end
@@ -199,12 +203,12 @@ function ReportVolumeValues()
     Configs.LastReportTime = current_time
     
     reaper.ClearConsole()
-    reaper.ShowConsoleMsg("Volume Balancer - Volume Report (" .. os.date("%H:%M:%S") .. ")\n")
-    reaper.ShowConsoleMsg("==========================================\n\n")
+    DebugPrint("Volume Balancer - Volume Report (" .. os.date("%H:%M:%S") .. ")\n")
+    DebugPrint("==========================================\n\n")
     
     for group_idx, group in ipairs(track_groups) do
-        reaper.ShowConsoleMsg("Group " .. group_idx .. ":\n")
-        reaper.ShowConsoleMsg("------------------------------------------\n")
+        DebugPrint("Group " .. group_idx .. ":\n")
+        DebugPrint("------------------------------------------\n")
         
         local total_linear = 0
         local volumes = {}
@@ -227,21 +231,21 @@ function ReportVolumeValues()
                     non_zero_count = non_zero_count + 1
                 end
                 
-                reaper.ShowConsoleMsg(string.format("Track %d: %s\n", i, track_name))
-                reaper.ShowConsoleMsg(string.format("  Volume: %.6f (%.4f dB)\n", volume, volume_db))
+                DebugPrint(string.format("Track %d: %s\n", i, track_name))
+                DebugPrint(string.format("  Volume: %.6f (%.4f dB)\n", volume, volume_db))
             end
         end
         
         -- Calculate total volume in dB
         local total_db = total_linear > 0 and 20 * math.log(total_linear, 10) or -150
         
-        reaper.ShowConsoleMsg("\nTotal Volume: " .. string.format("%.6f (%.4f dB)\n", total_linear, total_db))
+        DebugPrint("\nTotal Volume: " .. string.format("%.6f (%.4f dB)\n", total_linear, total_db))
         
         -- Check if volumes are balanced (should sum to 1.0 for perfect null)
         local expected_volume = 1.0 / #group
         local expected_db = -20 * math.log(#group, 10)
         
-        reaper.ShowConsoleMsg(string.format("Expected per-track volume: %.6f (%.4f dB)\n", expected_volume, expected_db))
+        DebugPrint(string.format("Expected per-track volume: %.6f (%.4f dB)\n", expected_volume, expected_db))
         
         -- Check for discrepancies using a more sophisticated approach
         -- The primary indicator of correct null testing is that the total volume is 1.0
@@ -253,9 +257,9 @@ function ReportVolumeValues()
         -- If the total volume is exactly 1.0, we consider the tracks to be balanced correctly
         -- regardless of individual track volumes
         if total_volume_ok then
-            reaper.ShowConsoleMsg("All volumes are balanced correctly (total = 1.0).\n")
+            DebugPrint("All volumes are balanced correctly (total = 1.0).\n")
         else
-            reaper.ShowConsoleMsg(string.format("WARNING: Total volume discrepancy: %.6f (should be 1.0)\n", total_volume_discrepancy))
+            DebugPrint(string.format("WARNING: Total volume discrepancy: %.6f (should be 1.0)\n", total_volume_discrepancy))
             
             -- Only check for ratio discrepancies if we have more than one non-zero track
             if non_zero_count > 1 then
@@ -286,16 +290,16 @@ function ReportVolumeValues()
                         _, track_name = reaper.GetTrackName(track)
                     end
                     
-                    reaper.ShowConsoleMsg(string.format("WARNING: Volume ratio discrepancy: %.6f in track '%s'\n", 
-                                                       max_ratio_discrepancy, track_name))
+                    DebugPrint(string.format("WARNING: Volume ratio discrepancy: %.6f in track '%s'\n", 
+                                           max_ratio_discrepancy, track_name))
                 end
             end
         end
         
-        reaper.ShowConsoleMsg("\n")
+        DebugPrint("\n")
     end
     
-    reaper.ShowConsoleMsg("==========================================\n")
+    DebugPrint("==========================================\n")
 end
 
 function Main()
@@ -640,6 +644,22 @@ function AdjustTrackVolume(track, volume_change_db, group)
     end
 end
 
+-- Set ToolBar Button ON
+function SetButtonON()
+    is_new_value, filename, sec, cmd, mode, resolution, val = reaper.get_action_context()
+    state = reaper.GetToggleCommandStateEx(sec, cmd)
+    reaper.SetToggleCommandState(sec, cmd, 1) -- Set ON
+    reaper.RefreshToolbar2(sec, cmd)
+end
+
+-- Set ToolBar Button OFF
+function SetButtonOFF()
+    is_new_value, filename, sec, cmd, mode, resolution, val = reaper.get_action_context()
+    state = reaper.GetToggleCommandStateEx(sec, cmd)
+    reaper.SetToggleCommandState(sec, cmd, 0) -- Set OFF
+    reaper.RefreshToolbar2(sec, cmd)
+end
+
 function DrawUI()
     -- Set default window size
     reaper.ImGui_SetNextWindowSize(ctx, 400, 500, reaper.ImGui_Cond_FirstUseEver())
@@ -844,6 +864,46 @@ function DrawUI()
     end
     if ToolTip then ToolTip("Automatically set nudge amount based on group size") end
     
+    -- Add a separator before the background mode button
+    reaper.ImGui_Separator(ctx)
+    
+    -- Add a small space before the button
+    reaper.ImGui_Spacing(ctx)
+    
+    -- Add a subtle background mode toggle button at the bottom
+    local button_text = Configs.BackgroundRunning and "● Background Mode Active" or "○ Background Mode Inactive"
+    local button_color = Configs.BackgroundRunning and 0x88CC88FF or 0x888888FF
+    
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), 0x333333FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), 0x444444FF)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), 0x555555FF)
+    
+    -- Center the button
+    local button_width = 180
+    local window_width = reaper.ImGui_GetWindowContentRegionMax(ctx)
+    reaper.ImGui_SetCursorPosX(ctx, (window_width - button_width) * 0.5)
+    
+    if reaper.ImGui_Button(ctx, button_text, button_width, 25) then
+        Configs.BackgroundRunning = not Configs.BackgroundRunning
+        SaveConfigs()
+        
+        -- Update toolbar button state
+        if Configs.BackgroundRunning then
+            SetButtonON()
+        else
+            SetButtonOFF()
+        end
+    end
+    reaper.ImGui_PopStyleColor(ctx, 3)
+    
+    if ToolTip then 
+        if Configs.BackgroundRunning then
+            ToolTip("Background mode is active - script will continue running when UI is closed")
+        else
+            ToolTip("Background mode is inactive - script will stop when UI is closed")
+        end
+    end
+    
     reaper.ImGui_PopFont(ctx) -- Pop the main font
     
     reaper.ImGui_End(ctx)
@@ -852,13 +912,23 @@ end
 
 -- Main loop
 function Loop()
+    -- Always run the Main function to process volume adjustments
     Main()
+    
+    -- Draw UI and check if window is open
     local open = DrawUI()
     
-    if open then
+    -- If background mode is running, continue even when UI is closed
+    if Configs.BackgroundRunning then
         reaper.defer(Loop)
     else
-        reaper.ImGui_DestroyContext(ctx)
+        -- Otherwise, only continue if the UI is open
+        if open then
+            reaper.defer(Loop)
+        else
+            reaper.ImGui_DestroyContext(ctx)
+            SetButtonOFF()
+        end
     end
 end
 
@@ -878,4 +948,5 @@ reaper.PreventUIRefresh(-1)
 reaper.atexit(function() 
     SaveGroups()
     SaveConfigs()
+    SetButtonOFF()
 end) 
