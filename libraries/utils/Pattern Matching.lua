@@ -21,33 +21,35 @@ function PatternMatching.MatchesAnyPattern(str, patterns)
         -- Handle the # wildcard for numbers by replacing it with a digit pattern
         local search_pattern = pattern:gsub("#", "%%d+")
         
-        -- Try to find the pattern in the string
+        -- Try to find the pattern in the string (case insensitive)
         if lower_str:find(search_pattern:lower()) then
             return true, pattern
         end
     end
     
-    return false
+    return false, nil
 end
 
 -- Check if a string matches any negative pattern (exclusion) in a list
 -- @param str The string to check
 -- @param negative_patterns Table of patterns to avoid matching
 -- @return boolean True if any negative pattern matches, false otherwise
+-- @return string The matching negative pattern or nil
 function PatternMatching.MatchesNegativePattern(str, negative_patterns)
-    if not str or not negative_patterns then return false end
+    if not str or not negative_patterns then return false, nil end
     
     local lower_str = str:lower()
     for _, pattern in ipairs(negative_patterns) do
         -- Handle the # wildcard for numbers by replacing it with a digit pattern
         local search_pattern = pattern:gsub("#", "%%d+")
         
+        -- Case insensitive matching
         if lower_str:find(search_pattern:lower()) then
-            return true
+            return true, pattern
         end
     end
     
-    return false
+    return false, nil
 end
 
 -- Extract a number from a file name based on a pattern
@@ -130,13 +132,14 @@ function PatternMatching.DetectStereoPair(file_name, stereo_config)
 end
 
 -- Find the best matching track configuration for a file
--- @param file_name The file name to match
+-- @param file_name The file name to match (matched case-insensitively)
 -- @param track_configs Table of track configurations
 -- @param context Optional context for matching (like parent track)
 -- @return table|nil The matching track configuration or nil if no match
 function PatternMatching.FindMatchingConfig(file_name, track_configs, context)
     if not file_name or not track_configs then return nil end
     
+    -- Convert to lowercase for case-insensitive comparison
     local lower_name = file_name:lower()
     local best_match = nil
     local best_priority = -1
@@ -148,13 +151,14 @@ function PatternMatching.FindMatchingConfig(file_name, track_configs, context)
         -- Check negative patterns first (exclusions)
         local skip = false
         if config.negative_patterns then
+            -- Case-insensitive check for negative patterns
             if PatternMatching.MatchesNegativePattern(lower_name, config.negative_patterns) then
                 skip = true
             end
         end
         if skip then goto continue end
         
-        -- Check if file matches any of the main patterns
+        -- Check if file matches any of the main patterns (case-insensitive)
         local matches, matching_pattern = PatternMatching.MatchesAnyPattern(lower_name, config.patterns)
         
         if matches then
@@ -165,6 +169,7 @@ function PatternMatching.FindMatchingConfig(file_name, track_configs, context)
             
             if config.sub_routes then
                 for _, sub_route in ipairs(config.sub_routes) do
+                    -- Case-insensitive sub-route pattern matching
                     local sub_matches = PatternMatching.MatchesAnyPattern(lower_name, sub_route.patterns or {})
                     if sub_matches then
                         matched_sub_route = true

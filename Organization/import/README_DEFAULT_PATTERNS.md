@@ -30,6 +30,7 @@ Default groups define standard track configurations, including:
 
 - Match patterns for identifying audio files
 - Parent track structure
+- Destination tracks for organized items
 - Naming conventions
 - Track template options
 - Increment settings
