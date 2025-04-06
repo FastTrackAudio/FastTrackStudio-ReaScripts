@@ -919,17 +919,26 @@ function DebugPrint(...)
 end
 
 function LoadConfigs()
-    local Configs = LoadExtStateTable(ScriptName, 'ConfigTable', true)
-    if not Configs then
-        Configs = InitConfigs()
-    else
+    local success, loaded
+    
+    -- Try to load configs from ExtState
+    success, loaded = pcall(function() 
+        return LoadExtStateTable(ScriptName, 'ConfigTable', true) 
+    end)
+    
+    -- If successful and we got a valid table
+    if success and loaded and type(loaded) == "table" then
+        local Configs = loaded
+        
         -- Ensure all required structures exist and are up to date
         if not Configs.Chunk then Configs.Chunk = {} end
         if not Configs.Chunk.Vis then Configs.Chunk.Vis = {} end
         if not Configs.Chunk.Vis.Options then Configs.Chunk.Vis.Options = {} end
         if not Configs.Groups then Configs.Groups = {} end
         if not Configs.CurrentSubGroup then Configs.CurrentSubGroup = "TCP" end
-
+        if Configs.ToolTips == nil then Configs.ToolTips = true end
+        if Configs.DebugMode == nil then Configs.DebugMode = false end
+        
         -- Ensure all groups have subGroups structure
         for _, group in ipairs(Configs.Groups) do
             if not group.subGroups then
@@ -985,8 +994,17 @@ function LoadConfigs()
                 Configs.Chunk.Misc[item.key].Name = item.name
             end
         end
+        
+        return Configs
+    else
+        -- If loading failed or returned invalid data, initialize new configs
+        local newConfigs = InitConfigs()
+        
+        -- Save the new configs to ExtState
+        pcall(function() SaveExtStateTable(ScriptName, 'ConfigTable', newConfigs, false) end)
+        
+        return newConfigs
     end
-    return Configs
 end
 
 function RefreshConfigs()
@@ -2185,8 +2203,9 @@ function HandleGroupActivation(group)
     reaper.ThemeLayout_RefreshAll()
     DebugPrint("UI refresh and layout updates took:", (reaper.time_precise() - refresh_start) * 1000, "ms")
     
-    -- End undo block without creating an undo point
-    reaper.Undo_EndBlock("", 0)
+    -- End undo block with a descriptive name
+    local actionName = group.active and "Visibility Manager Group Activation" or "Visibility Manager Group Deactivation"
+    reaper.Undo_EndBlock(actionName, -1)
     
     -- Restore original selection at the very end
     reaper.Main_OnCommand(reaper.NamedCommandLookup("_SWS_RESTORESEL"), 0)

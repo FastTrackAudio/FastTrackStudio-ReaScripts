@@ -135,10 +135,31 @@ imgui.Attach(ctx, SYSTEM_FONT_FACTORY)
 
 local menu_png_path = script_path .. "/reatips_Track icon selector/Menu.png"
 local rest_png_path = script_path .. "/reatips_Track icon selector/Reset.png"
-local menu_icon = imgui.CreateImage(menu_png_path)
-local reset_icon = imgui.CreateImage(rest_png_path)
-imgui.Attach(ctx, menu_icon)
-imgui.Attach(ctx, reset_icon)
+
+-- Function to safely load an image with error handling
+function SafeLoadImage(path)
+    -- Check if file exists first
+    local file = io.open(path, "r")
+    if not file then
+        -- File doesn't exist, return nil without error
+        return nil
+    end
+    file:close()
+    
+    -- Try to create the image with error handling
+    local success, image = pcall(imgui.CreateImage, path)
+    if success and image then
+        return image
+    end
+    return nil
+end
+
+local menu_icon = SafeLoadImage(menu_png_path)
+local reset_icon = SafeLoadImage(rest_png_path)
+
+-- Only attach valid images
+if menu_icon then imgui.Attach(ctx, menu_icon) end
+if reset_icon then imgui.Attach(ctx, reset_icon) end
 
 local png_path_track_icons = "/Data/track_icons"
 
@@ -362,54 +383,59 @@ local function PngSelector(button_size)
 
             imgui.PushID(ctx, n)
             if not imgui.ValidatePtr(FILTERED_PNG[n + 1].img_obj, 'ImGui_Image*') then
-                if not pcall(function() FILTERED_PNG[n + 1].img_obj = imgui.CreateImage(image) end) then  
-                    r.ShowConsoleMsg("Unsupported image : " .. image .. "\n\n")
-               end
+                -- Use safer image loading
+                FILTERED_PNG[n + 1].img_obj = SafeLoadImage(image)
+                if not FILTERED_PNG[n + 1].img_obj then
+                    -- Create a dummy placeholder or skip without error message
+                    -- We don't show error messages now to avoid console spam
+                end
             end
 
-            if imgui.ImageButton(ctx, "##png_select", FILTERED_PNG[n + 1].img_obj, button_size, button_size, 0, 0, 1, 1) then
-                if #TRACKS > 0 then
-                    r.Undo_BeginBlock2(nil)
-                    for i = 1, #TRACKS do
-                        r.GetSetMediaTrackInfo_String(TRACKS[i], "P_ICON", image, true)
+            -- Only process if we have a valid image object
+            if FILTERED_PNG[n + 1].img_obj and imgui.ValidatePtr(FILTERED_PNG[n + 1].img_obj, 'ImGui_Image*') then
+                if imgui.ImageButton(ctx, "##png_select", FILTERED_PNG[n + 1].img_obj, button_size, button_size, 0, 0, 1, 1) then
+                    if #TRACKS > 0 then
+                        r.Undo_BeginBlock2(nil)
+                        for i = 1, #TRACKS do
+                            r.GetSetMediaTrackInfo_String(TRACKS[i], "P_ICON", image, true)
+                        end
+                        r.Undo_EndBlock2(nil, "Changed Track Icon", 1)
+                        if QUIT_ON_SELECT then
+                            WANT_CLOSE = true
+                        end
+                        LAST_ICON = image
+                        CUR_ICON = image
                     end
-                    r.Undo_EndBlock2(nil, "Changed Track Icon", 1)
-                    if QUIT_ON_SELECT then
-                        WANT_CLOSE = true
+                end
+                if imgui.IsItemActive(ctx) and imgui.IsMouseDragging(ctx, 0) and imgui.BeginDragDropSource(ctx) then
+                    imgui.Image(ctx, FILTERED_PNG[n + 1].img_obj, button_size, button_size)
+                    dnd_image = image
+                    imgui.EndDragDropSource(ctx)
+                end
+
+                if imgui.IsItemHovered(ctx) and TOOLTIPS then
+                    DrawTooltips(stripped_name)
+                end
+
+                local minx, miny = imgui.GetItemRectMin(ctx)
+                local maxx, maxy = imgui.GetItemRectMax(ctx)
+                if CUR_ICON == image then
+                    if LAST_ICON ~= CUR_ICON then
+                        SCROLL_TO_IMG = true
+                        LAST_ICON = CUR_ICON
                     end
-                    LAST_ICON = image
-                    CUR_ICON = image
+                    imgui.DrawList_AddRect(DRAW_LIST, minx, miny, maxx, maxy, COLORS["outline_col"], 0, 0, 2)
+                    if SCROLL_TO_IMG then
+                        SCROLL_TO_IMG = nil
+                        imgui.SetScrollHereY(ctx)
+                    end
                 end
-            end
-            if imgui.IsItemActive(ctx) and imgui.IsMouseDragging(ctx, 0) and imgui.BeginDragDropSource(ctx) then
-                imgui.Image(ctx, FILTERED_PNG[n + 1].img_obj, button_size, button_size)
-                dnd_image = image
-                imgui.EndDragDropSource(ctx)
-            end
 
-            if imgui.IsItemHovered(ctx) and TOOLTIPS then
-                DrawTooltips(stripped_name)
-            end
+                local next_button_x2 = maxx + item_spacing_x + button_size
 
-            local minx, miny = imgui.GetItemRectMin(ctx)
-            local maxx, maxy = imgui.GetItemRectMax(ctx)
-            if CUR_ICON == image then
-                if LAST_ICON ~= CUR_ICON then
-                    SCROLL_TO_IMG = true
-                    LAST_ICON = CUR_ICON
+                if n + 1 < buttons_count and next_button_x2 < window_visible_x2 then
+                    imgui.SameLine(ctx)
                 end
-                imgui.DrawList_AddRect(DRAW_LIST, minx, miny, maxx, maxy, COLORS["outline_col"], 0, 0, 2)
-                if SCROLL_TO_IMG then
-                    SCROLL_TO_IMG = nil
-                    imgui.SetScrollHereY(ctx)
-                end
-            end
-
-
-            local next_button_x2 = maxx + item_spacing_x + button_size
-
-            if n + 1 < buttons_count and next_button_x2 < window_visible_x2 then
-                imgui.SameLine(ctx)
             end
 
             imgui.PopID(ctx)

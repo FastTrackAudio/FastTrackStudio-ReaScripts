@@ -614,6 +614,14 @@ function LoadIcon(path)
     -- Initialize cache if needed
     if not ICON_CACHE then ICON_CACHE = {} end
     
+    -- Check if path exists before attempting to load
+    local file = io.open(path, "r")
+    if not file then
+        -- File doesn't exist, return nil without error
+        return nil
+    end
+    file:close()
+    
     -- Check if icon is already cached and valid
     if ICON_CACHE[path] then
         if reaper.ImGui_ValidatePtr(ICON_CACHE[path], 'ImGui_Image*') then
@@ -624,7 +632,7 @@ function LoadIcon(path)
         end
     end
     
-    -- Load new icon
+    -- Load new icon with enhanced error handling
     local success, icon = pcall(reaper.ImGui_CreateImage, path)
     if success and icon and reaper.ImGui_ValidatePtr(icon, 'ImGui_Image*') then
         ICON_CACHE[path] = icon
@@ -668,6 +676,14 @@ function LoadIcons()
     local reaper_path = reaper.GetResourcePath()
     local icons_path = reaper_path .. "/Data/track_icons"
     
+    -- Check if the icons directory exists
+    local icons_dir = io.open(icons_path, "r")
+    if not icons_dir then
+        -- Icons directory doesn't exist, just return without error
+        return
+    end
+    icons_dir:close()
+    
     -- Function to scan directory recursively
     local function scanDirectory(path, category)
         for i = 0, math.huge do
@@ -701,7 +717,10 @@ function LoadIcons()
         end
     end
     
-    scanDirectory(icons_path)
+    -- Use pcall to prevent any errors during directory scanning
+    pcall(function()
+        scanDirectory(icons_path)
+    end)
 end
 
 -- Function to clear icon cache and reset zoom state

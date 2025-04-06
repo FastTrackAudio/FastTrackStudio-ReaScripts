@@ -3,7 +3,15 @@
 
 local info = debug.getinfo(1, "S")
 local script_path = info.source:match([[^@?(.*[\/])[^\/]-$]])
-dofile(script_path .. "Serialize Table.lua") -- Load serialization functions
+
+-- Get the path to the FastTrackStudio Scripts root folder (two levels up)
+local root_path = script_path:match("(.*[/\\])Tracks[/\\].*[/\\]")
+if not root_path then
+    root_path = script_path:match("(.*[/\\]).*[/\\].*[/\\]")
+end
+
+-- Load utilities from the libraries/utils folder
+dofile(root_path .. "libraries/utils/Serialize Table.lua") -- Load serialization functions
 
 -- Script name for ExtState
 local ScriptName = "Volume Balancer"
@@ -39,7 +47,7 @@ SaveConfigs(configs)
 SetButtonON()
 
 -- Load the Volume Balancer Core script
-dofile(script_path .. "Volume Balancer Core.lua")
+dofile(script_path .. "FTS_Volume Balancer Core.lua")
 
 -- Show confirmation message
 reaper.ShowMessageBox("Volume Balancer has been started.", "Volume Balancer Started", 0) 

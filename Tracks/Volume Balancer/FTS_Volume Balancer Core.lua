@@ -4,7 +4,18 @@
 
 local info = debug.getinfo(1, "S")
 local script_path = info.source:match([[^@?(.*[\/])[^\/]-$]])
-dofile(script_path .. "Serialize Table.lua") -- Load serialization functions
+
+-- Get the path to the FastTrackStudio Scripts root folder (two levels up)
+local root_path = script_path:match("(.*[/\\])Tracks[/\\].*[/\\]")
+if not root_path then
+    root_path = script_path:match("(.*[/\\]).*[/\\].*[/\\]")
+end
+
+-- Load utilities from the libraries/utils folder
+dofile(root_path .. "libraries/utils/Serialize Table.lua") -- Load serialization functions
+
+-- Load GUI utilities
+local GUI = dofile(root_path .. "libraries/utils/GUI Functions.lua")
 
 -- Script name for ExtState
 local ScriptName = "Volume Balancer"
@@ -77,8 +88,15 @@ end
 
 -- Load configuration from ExtState
 function LoadConfigs()
-    local loaded = LoadExtStateTable(ScriptName, "configs", true)
-    if loaded then
+    local success, loaded
+    
+    -- Try to load configs from ExtState
+    success, loaded = pcall(function() 
+        return LoadExtStateTable(ScriptName, "configs", true) 
+    end)
+    
+    -- If successful and we got a valid table
+    if success and loaded and type(loaded) == "table" then
         -- Ensure all required config values exist
         if loaded.NudgeAmount == nil then loaded.NudgeAmount = 1.0 end
         if loaded.AutoNudgeAmount == nil then loaded.AutoNudgeAmount = true end
@@ -91,6 +109,28 @@ function LoadConfigs()
         if loaded.BackgroundRunning == nil then loaded.BackgroundRunning = false end
         
         Configs = loaded
+        return loaded
+    else
+        -- Return a default configuration if loading failed
+        local default_configs = {
+            MinVolume = -60.0,    -- Minimum volume in dB
+            MaxVolume = 6.0,      -- Maximum volume in dB
+            UseInfMin = false,    -- Whether to use -inf dB as minimum
+            ReportValues = false, -- Whether to report values to debug log
+            LastReportTime = 0,   -- Last time values were reported
+            NudgeAmount = 1.0,    -- Default nudge amount in dB
+            AutoNudgeAmount = true, -- Whether to automatically set nudge amount based on group size
+            DebugMode = false,    -- Whether to enable debug printing
+            BackgroundRunning = false -- Whether background mode is currently active
+        }
+        
+        -- Update the global Configs with default values
+        Configs = default_configs
+        
+        -- Try to save the default configs to ExtState
+        pcall(function() SaveExtStateTable(ScriptName, "configs", default_configs, true) end)
+        
+        return default_configs
     end
 end
 
@@ -616,6 +656,17 @@ end
 
 -- Main loop
 function Loop()
+    -- Check if we should be running
+    local configs = LoadConfigs()
+    
+    -- If configs is nil or BackgroundRunning is explicitly set to false, exit the loop
+    if not configs or configs.BackgroundRunning == false then
+        -- Background mode has been turned off, exit the loop
+        DebugPrint("Background mode turned off, exiting loop\n")
+        SetButtonOFF()
+        return -- Exit the defer loop
+    end
+    
     -- Always run the Main function to process volume adjustments
     Main()
     
@@ -626,19 +677,19 @@ end
 -- Initialize
 function Init()
     -- Load saved groups and configs
-    LoadGroups()
-    LoadConfigs()
+    pcall(LoadGroups) -- Use pcall to prevent errors
     
-    -- Set toolbar button state
-    if Configs.BackgroundRunning then
+    -- Make sure Configs exists
+    local configs = LoadConfigs()
+    
+    -- Set toolbar button state based on configs
+    if configs and configs.BackgroundRunning then
         SetButtonON()
+        
+        -- Start the loop if background mode is enabled
+        reaper.defer(Loop)
     else
         SetButtonOFF()
-    end
-    
-    -- Start the loop if background mode is enabled
-    if Configs.BackgroundRunning then
-        reaper.defer(Loop)
     end
 end
 

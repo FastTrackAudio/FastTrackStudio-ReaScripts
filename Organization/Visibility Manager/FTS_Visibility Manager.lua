@@ -25,15 +25,43 @@ local info = debug.getinfo(1, "S")
 script_path = info.source:match([[^@?(.*[\/])[^\/]-$]])
 configs_filename = "configs" -- Json ScriptName
 
-dofile(script_path .. "Serialize Table.lua") -- preset to work with Tables
-dofile(script_path .. "Track Parameter Functions.lua") -- Functions for track parameters
-dofile(script_path .. "Track Snapshot Functions.lua") -- Functions to this script
-dofile(script_path .. "General Functions.lua") -- General Functions needed
-dofile(script_path .. "GUI Functions.lua") -- General Functions needed
-dofile(script_path .. "Chunk Functions.lua") -- General Functions needed
-dofile(script_path .. "theme.lua") -- General Functions needed
-dofile(script_path .. "Track Snapshot Send Functions.lua") -- General Functions needed
-dofile(script_path .. "REAPER Functions.lua") -- preset to work with Tables
+-- Get the path to the FastTrackStudio Scripts root folder (two levels up)
+local root_path = script_path:match("(.*[/\\])Organization[/\\].*[/\\]")
+if not root_path then
+    root_path = script_path:match("(.*[/\\]).*[/\\].*[/\\]")
+end
+
+-- Load utilities from the central utils folder
+dofile(root_path .. "libraries/utils/Serialize Table.lua") -- Load serialization functions
+dofile(script_path .. "Track Parameter Functions.lua") -- Functions for track parameters (script-specific)
+dofile(script_path .. "Track Snapshot Functions.lua") -- Functions to this script (script-specific)
+dofile(root_path .. "libraries/utils/General Functions.lua") -- General Functions needed
+dofile(root_path .. "libraries/utils/Chunk Functions.lua") -- Chunk Functions needed
+dofile(root_path .. "libraries/utils/theme.lua") -- Theme Functions needed
+dofile(script_path .. "Track Snapshot Send Functions.lua") -- Functions to this script (script-specific)
+dofile(root_path .. "libraries/utils/REAPER Functions.lua") -- REAPER utility functions
+
+-- Import GUI Functions module for easier reference
+local GUI = {}
+local success, guiFunctions = pcall(function() return dofile(root_path .. "libraries/utils/GUI Functions.lua") end)
+if success and type(guiFunctions) == "table" then
+    -- If dofile returned a table, use it
+    for k, v in pairs(guiFunctions) do
+        GUI[k] = v
+    end
+else
+    -- If we didn't get a table, we'll need to provide essential functions
+    -- Create a local ToolTip implementation
+    GUI.ToolTip = function(ctx, text)
+        if reaper.ImGui_IsItemHovered(ctx) then
+            reaper.ImGui_BeginTooltip(ctx)
+            reaper.ImGui_Text(ctx, text)
+            reaper.ImGui_EndTooltip(ctx)
+        end
+    end
+    
+    reaper.ShowConsoleMsg("\nWarning: Failed to load GUI Functions module. Using fallback implementations.\n")
+end
 
 if not CheckSWS() or not CheckReaImGUI() or not CheckJS() then
 	return
@@ -57,9 +85,34 @@ function GuiInit()
 end
 
 function Init()
-	Snapshot = LoadSnapshot()
-	Configs = LoadConfigs()
-	GuiInit()
+	-- Initialize with better error handling
+	local success
+	
+	-- Load Snapshot data with error handling
+	success, Snapshot = pcall(function() return LoadSnapshot() end)
+	if not success or not Snapshot then
+		Snapshot = {}
+		reaper.ShowConsoleMsg("\nWarning: Failed to load snapshots. Starting with a fresh configuration.\n")
+	end
+	
+	-- Load Configs data with error handling
+	success, Configs = pcall(function() return LoadConfigs() end)
+	if not success or not Configs then
+		Configs = {
+			ShowAll = false,
+			ViewMode = "Toggle",
+			ToolTips = true,
+			DebugMode = false,
+			Groups = {}
+		}
+		reaper.ShowConsoleMsg("\nWarning: Failed to load configuration. Starting with default settings.\n")
+	end
+	
+	-- Initialize GUI with error handling
+	success = pcall(GuiInit)
+	if not success then
+		reaper.ShowConsoleMsg("\nError initializing GUI. Please check your ReaImGUI installation.\n")
+	end
 end
 
 function loop()
@@ -98,9 +151,7 @@ function loop()
 				reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), 0xFF4848FF)
 				reaper.ImGui_Text(ctx, "V.")
 				reaper.ImGui_PopStyleColor(ctx, 1)
-				if Configs.ToolTips then
-					ToolTip("Track Version Mode ON")
-				end
+				SafeToolTip(ctx, "Track Version Mode ON")
 			end
 			reaper.ImGui_EndMenuBar(ctx)
 		end
@@ -115,7 +166,7 @@ function loop()
 			TempNewGroupPopup = true
 			TempNewGroupName = ""
 		end
-		if Configs.ToolTips then ToolTip("Create a new group") end
+		SafeToolTip(ctx, "Create a new group")
 
 		-- Display groups and their snapshots
 		if reaper.ImGui_BeginListBox(ctx, '##grouplist', -1, -1) then
@@ -600,11 +651,7 @@ function loop()
 					end
 					
 					if showIconOnly then
-						if reaper.ImGui_IsItemHovered(ctx) then
-							reaper.ImGui_BeginTooltip(ctx)
-							reaper.ImGui_Text(ctx, tcpPreviewValue)
-							reaper.ImGui_EndTooltip(ctx)
-						end
+						SafeToolTip(ctx, tcpPreviewValue)
 					end
 				elseif showIconOnly then
 					-- Draw "T" for empty TCP
@@ -779,11 +826,7 @@ function loop()
 					end
 					
 					if showIconOnly then
-						if reaper.ImGui_IsItemHovered(ctx) then
-							reaper.ImGui_BeginTooltip(ctx)
-							reaper.ImGui_Text(ctx, mcpPreviewValue)
-							reaper.ImGui_EndTooltip(ctx)
-						end
+						SafeToolTip(ctx, mcpPreviewValue)
 					end
 				elseif showIconOnly then
 					-- Draw "M" for empty MCP
@@ -1153,6 +1196,9 @@ function HandleGroupActivation(group)
 		DebugPrint(string.format("Total deactivation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
 		DebugPrint("=== End HandleGroupActivation Debug ===\n")
 		
+		-- Allow UI updates and end undo block before returning
+		reaper.Undo_EndBlock("Visibility Manager Group Deactivation", -1)
+		reaper.PreventUIRefresh(-1)
 		return
 	end
 	
@@ -1256,6 +1302,10 @@ function HandleGroupActivation(group)
 	
 	-- Force REAPER to refresh all layouts
 	reaper.ThemeLayout_RefreshAll()
+	
+	-- End undo block and re-enable UI refreshes
+	reaper.Undo_EndBlock("Visibility Manager Group Activation", -1)
+	reaper.PreventUIRefresh(-1)
 	
 	DebugPrint(string.format("Total activation took %.3f ms", (reaper.time_precise() - start_time) * 1000))
 	DebugPrint("=== End HandleGroupActivation Debug ===\n")
@@ -1601,6 +1651,23 @@ function FindSnapshotPopup()
 
         reaper.ImGui_PopStyleColor(ctx, 3)
         reaper.ImGui_EndPopup(ctx)
+    end
+end
+
+-- Safe ToolTip function that handles nil values and ensure tooltip checks are more robust
+function SafeToolTip(ctx, text)
+    if Configs and Configs.ToolTips then
+        -- Use our local GUI.ToolTip if it exists
+        if GUI and GUI.ToolTip then
+            GUI.ToolTip(ctx, text)
+        else
+            -- Fallback implementation
+            if reaper.ImGui_IsItemHovered(ctx) then
+                reaper.ImGui_BeginTooltip(ctx)
+                reaper.ImGui_Text(ctx, text)
+                reaper.ImGui_EndTooltip(ctx)
+            end
+        end
     end
 end
 

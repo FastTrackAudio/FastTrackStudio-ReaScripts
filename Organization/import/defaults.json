@@ -1,0 +1,122 @@
+{
+  "default_patterns": {
+    "tracking": ["Take", "Comp", "Alt", "V1", "V2", "Version"],
+    "subtype": [
+      "Clean",
+      "Distorted",
+      "Hard",
+      "Soft",
+      "High",
+      "Low",
+      "Electric",
+      "Acoustic"
+    ],
+    "arrangement": [
+      "Verse",
+      "Chorus",
+      "Bridge",
+      "Intro",
+      "Outro",
+      "Pre",
+      "Post"
+    ],
+    "performer": ["Vocalist", "Drummer", "Guitarist", "Bassist", "Keyboardist"],
+    "section": ["A", "B", "C", "Break", "Fill", "Solo"],
+    "layers": ["Double", "Layer", "Octave", "Fifth", "Harmony"],
+    "mic": [
+      "SM57",
+      "U87",
+      "MD421",
+      "D112",
+      "Room",
+      "OH",
+      "Close",
+      "Far",
+      "Spot"
+    ],
+    "playlist": [".1", ".2", ".3", ".4", ".5"],
+    "type": ["BUS", "SUM", "MIDI", "SAMPLE", "WAV", "AUDIO", "VSTi"]
+  },
+  "default_groups": [
+    {
+      "name": "Drums",
+      "patterns": ["drum", "kick", "snare", "hat", "tom", "cymbal"],
+      "parent_track": "DRUMS",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "only_number_when_multiple": true,
+      "pattern_categories": {
+        "prefix": {
+          "patterns": ["Drum", "Kit"]
+        },
+        "type": {
+          "patterns": ["DRUM", "PERC"]
+        }
+      }
+    },
+    {
+      "name": "Guitars",
+      "patterns": ["gtr", "guitar", "acoustic"],
+      "parent_track": "GUITARS",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "only_number_when_multiple": true,
+      "pattern_categories": {
+        "prefix": {
+          "patterns": ["Gtr", "Guitar"]
+        },
+        "type": {
+          "patterns": ["GTR"]
+        }
+      }
+    },
+    {
+      "name": "Bass",
+      "patterns": ["bass", "bs"],
+      "parent_track": "BASS",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "only_number_when_multiple": true,
+      "pattern_categories": {
+        "prefix": {
+          "patterns": ["Bass", "Bs"]
+        },
+        "type": {
+          "patterns": ["BASS"]
+        }
+      }
+    },
+    {
+      "name": "Vocals",
+      "patterns": ["vox", "vocal", "voice", "sing"],
+      "parent_track": "VOCALS",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "only_number_when_multiple": true,
+      "pattern_categories": {
+        "prefix": {
+          "patterns": ["Vox", "Vocal"]
+        },
+        "type": {
+          "patterns": ["VOX"]
+        }
+      }
+    },
+    {
+      "name": "Synths",
+      "patterns": ["synth", "pad", "lead", "arp", "keys"],
+      "parent_track": "SYNTHS",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "only_number_when_multiple": true,
+      "pattern_categories": {
+        "prefix": {
+          "patterns": ["Synth", "Keys"]
+        },
+        "type": {
+          "patterns": ["SYNTH"]
+        }
+      }
+    }
+  ]
+}
