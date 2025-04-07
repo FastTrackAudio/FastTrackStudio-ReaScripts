@@ -1,0 +1,80 @@
+.reaper-interface {
+  background-color: #2c2c2c;
+  color: #e0e0e0;
+  padding: 20px;
+  border-radius: 5px;
+  max-width: 800px;
+  margin: 0 auto;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.reaper-interface h2 {
+  color: #e0e0e0;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #444;
+  padding-bottom: 10px;
+}
+
+.connection-status {
+  padding: 10px;
+  margin-bottom: 20px;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.connection-status.connected {
+  background-color: #285b38;
+  color: #a0f0a0;
+}
+
+.connection-status.disconnected {
+  background-color: #752424;
+  color: #f0a0a0;
+}
+
+.reaper-interface button {
+  background-color: #444;
+  color: #e0e0e0;
+  border: none;
+  padding: 10px 15px;
+  margin: 10px 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background-color 0.2s;
+}
+
+.reaper-interface button:hover:not(:disabled) {
+  background-color: #555;
+}
+
+.reaper-interface button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tracks-list {
+  margin-top: 20px;
+  padding: 15px;
+  background-color: #222;
+  border-radius: 4px;
+}
+
+.tracks-list h3 {
+  margin-top: 0;
+  color: #e0e0e0;
+}
+
+.tracks-list ul {
+  list-style-type: none;
+  padding-left: 0;
+}
+
+.tracks-list li {
+  padding: 8px;
+  border-bottom: 1px solid #444;
+}
+
+.tracks-list li:last-child {
+  border-bottom: none;
+}

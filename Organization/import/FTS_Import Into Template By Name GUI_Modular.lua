@@ -128,10 +128,10 @@ function ImportScript.DebugPrint(message)
     end
 end
 
--- Helper function to get table keys as array
-local function GetTableKeys(tbl)
+-- Helper function to get table keys as a list
+function GetTableKeys(tbl)
     local keys = {}
-    for k in pairs(tbl) do
+    for k, _ in pairs(tbl) do
         table.insert(keys, k)
     end
     return keys
@@ -687,108 +687,251 @@ function MoveSelectedItems()
 end
 
 -- First, add a helper function to extract pattern categories from item name
-function ExtractPatternCategories(item_name, global_patterns)
+function ExtractPatternCategories(item_name, global_patterns, log_matches)
     local categories = {}
+    
+    -- Convert item name to lowercase for case-insensitive matching
+    local item_name_lower = item_name:lower()
+    
+    -- Helper function to get patterns array depending on structure
+    local function getPatterns(category)
+        if not category then return {} end
+        -- Handle both formats: array of patterns or object with patterns property
+        if category.patterns then
+            return category.patterns
+        else
+            return category
+        end
+    end
+    
+    -- Helper function to match pattern as a whole word or distinct word segment
+    local function matchesAsWord(str, pattern)
+        pattern = pattern:lower()
+        
+        -- Escape special pattern characters
+        local escaped_pattern = pattern:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
+        
+        -- Look for word boundaries around the pattern:
+        -- 1. At the start of string: ^pattern followed by space or punctuation
+        -- 2. After space/punctuation: space/punct + pattern + space/punct
+        -- 3. At the end of string: space/punct + pattern$
+        -- 4. Exact match: ^pattern$
+        local match_patterns = {
+            "^" .. escaped_pattern .. "[%s%p]",           -- Start of string
+            "[%s%p]" .. escaped_pattern .. "[%s%p]",      -- Middle of string
+            "[%s%p]" .. escaped_pattern .. "$",           -- End of string
+            "^" .. escaped_pattern .. "$"                 -- Exact match
+        }
+        
+        for _, match_pattern in ipairs(match_patterns) do
+            if str:match(match_pattern) then
+                return true
+            end
+        end
+        
+        return false
+    end
     
     -- Check each pattern category
     if global_patterns then
         -- Check for prefix
-        if global_patterns.prefix then
-            for _, pattern in ipairs(global_patterns.prefix) do
-                if item_name:match(pattern) then
-                    categories.prefix = pattern
-                    break
+        local prefix_patterns = getPatterns(global_patterns.prefix)
+        for _, pattern in ipairs(prefix_patterns) do
+            if matchesAsWord(item_name_lower, pattern) then
+                categories.prefix = pattern
+                if log_matches then
+                    ImportScript.LogMessage("Detected prefix pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
                 end
+                break
             end
         end
         
         -- Check for tracking info
-        if global_patterns.tracking then
-            for _, pattern in ipairs(global_patterns.tracking) do
-                if item_name:match(pattern) then
-                    categories.tracking = pattern
-                    break
+        local tracking_patterns = getPatterns(global_patterns.tracking)
+        for _, pattern in ipairs(tracking_patterns) do
+            if matchesAsWord(item_name_lower, pattern) then
+                categories.tracking = pattern
+                if log_matches then
+                    ImportScript.LogMessage("Detected tracking info pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
                 end
+                break
             end
         end
         
         -- Check for subtype
-        if global_patterns.subtype then
-            for _, pattern in ipairs(global_patterns.subtype) do
-                if item_name:match(pattern) then
-                    categories.subtype = pattern
-                    break
+        local subtype_patterns = getPatterns(global_patterns.subtype)
+        for _, pattern in ipairs(subtype_patterns) do
+            if matchesAsWord(item_name_lower, pattern) then
+                categories.subtype = pattern
+                if log_matches then
+                    ImportScript.LogMessage("Detected subtype pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
                 end
+                break
             end
         end
         
         -- Check for arrangement
-        if global_patterns.arrangement then
-            for _, pattern in ipairs(global_patterns.arrangement) do
-                if item_name:match(pattern) then
-                    categories.arrangement = pattern
+        local arrangement_patterns = getPatterns(global_patterns.arrangement)
+        for _, pattern in ipairs(arrangement_patterns) do
+            if matchesAsWord(item_name_lower, pattern) then
+                categories.arrangement = pattern
+                if log_matches then
+                    ImportScript.LogMessage("Detected arrangement pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
+                end
+                break
+            end
+        end
+        
+        -- Check for performer
+        local performer_patterns = getPatterns(global_patterns.performer)
+        -- First check the full parentheses content directly
+        local performer_in_parens = item_name:match("%(([^)]+)%)")
+        if performer_in_parens then
+            if log_matches then
+                ImportScript.LogMessage("Found text in parentheses: '" .. performer_in_parens .. "'", "PATTERN")
+            end
+            
+            -- Check if the content directly matches any performer pattern
+            for _, pattern in ipairs(performer_patterns) do
+                -- Direct match on the whole content or part of it - for performers we allow partial matches
+                if performer_in_parens:lower():match(pattern:lower()) then
+                    categories.performer = pattern
+                    if log_matches then
+                        ImportScript.LogMessage("Detected performer pattern: '" .. pattern .. "' in parentheses '" .. performer_in_parens .. "'", "PATTERN")
+                    end
                     break
                 end
             end
         end
         
-        -- Check for performer
-        if global_patterns.performer then
-            for _, pattern in ipairs(global_patterns.performer) do
-                if item_name:match("%(.*" .. pattern .. ".*%)") then
+        -- If no direct match, try the original method
+        if not categories.performer then
+            for _, pattern in ipairs(performer_patterns) do
+                -- Check for performer in item name with traditional pattern
+                if item_name_lower:match("%(.*" .. pattern:lower() .. ".*%)") then
                     categories.performer = pattern
+                    if log_matches then
+                        ImportScript.LogMessage("Detected performer pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
+                    end
                     break
                 end
             end
         end
         
         -- Check for section
-        if global_patterns.section then
-            for _, pattern in ipairs(global_patterns.section) do
-                if item_name:match(pattern) then
+        local section_patterns = getPatterns(global_patterns.section)
+        for _, pattern in ipairs(section_patterns) do
+            -- Special handling for single-letter patterns like "A", "B", "C"
+            if #pattern == 1 then
+                -- Single characters need strict word boundaries
+                local strict_patterns = {
+                    "^" .. pattern:lower() .. "[%s%p]",         -- At start: "A " or "A,"
+                    "[%s%p]" .. pattern:lower() .. "[%s%p]",    -- Middle: " A " or ",A,"
+                    "[%s%p]" .. pattern:lower() .. "$",         -- At end: " A" or ",A"
+                    "^" .. pattern:lower() .. "$"               -- Exact match: just "A"
+                }
+                
+                local found = false
+                for _, strict_pattern in ipairs(strict_patterns) do
+                    if item_name_lower:match(strict_pattern) then
+                        found = true
+                        break
+                    end
+                end
+                
+                if found then
                     categories.section = pattern
+                    if log_matches then
+                        ImportScript.LogMessage("Detected section pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
+                    end
+                    break
+                end
+            else
+                -- For multi-character patterns, use the regular word matching
+                if matchesAsWord(item_name_lower, pattern) then
+                    categories.section = pattern
+                    if log_matches then
+                        ImportScript.LogMessage("Detected section pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
+                    end
                     break
                 end
             end
         end
         
         -- Check for layers
-        if global_patterns.layers then
-            for _, pattern in ipairs(global_patterns.layers) do
-                if item_name:match(pattern) then
+        local layer_patterns = getPatterns(global_patterns.layers)
+        for _, pattern in ipairs(layer_patterns) do
+            -- Special handling for single-letter patterns like "L", "R"
+            if #pattern == 1 then
+                -- Single characters need strict word boundaries
+                local strict_patterns = {
+                    "^" .. pattern:lower() .. "[%s%p]",         -- At start: "L " or "L,"
+                    "[%s%p]" .. pattern:lower() .. "[%s%p]",    -- Middle: " L " or ",L,"
+                    "[%s%p]" .. pattern:lower() .. "$",         -- At end: " L" or ",L"
+                    "^" .. pattern:lower() .. "$"               -- Exact match: just "L"
+                }
+                
+                local found = false
+                for _, strict_pattern in ipairs(strict_patterns) do
+                    if item_name_lower:match(strict_pattern) then
+                        found = true
+                        break
+                    end
+                end
+                
+                if found then
                     categories.layers = pattern
+                    if log_matches then
+                        ImportScript.LogMessage("Detected layer pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
+                    end
+                    break
+                end
+            else
+                -- For multi-character patterns, use the regular word matching
+                if matchesAsWord(item_name_lower, pattern) then
+                    categories.layers = pattern
+                    if log_matches then
+                        ImportScript.LogMessage("Detected layer pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
+                    end
                     break
                 end
             end
         end
         
         -- Check for mic
-        if global_patterns.mic then
-            for _, pattern in ipairs(global_patterns.mic) do
-                if item_name:match(pattern) then
-                    categories.mic = pattern
-                    break
+        local mic_patterns = getPatterns(global_patterns.mic)
+        for _, pattern in ipairs(mic_patterns) do
+            if matchesAsWord(item_name_lower, pattern) then
+                categories.mic = pattern
+                if log_matches then
+                    ImportScript.LogMessage("Detected mic pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
                 end
+                break
             end
         end
         
         -- Check for playlist
-        if global_patterns.playlist then
-            for _, pattern in ipairs(global_patterns.playlist) do
-                if item_name:match(pattern) then
-                    categories.playlist = pattern
-                    break
+        local playlist_patterns = getPatterns(global_patterns.playlist)
+        for _, pattern in ipairs(playlist_patterns) do
+            if matchesAsWord(item_name_lower, pattern) then
+                categories.playlist = pattern
+                if log_matches then
+                    ImportScript.LogMessage("Detected playlist pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
                 end
+                break
             end
         end
         
         -- Check for type
-        if global_patterns.type then
-            for _, pattern in ipairs(global_patterns.type) do
-                if item_name:match("%[.*" .. pattern .. ".*%]") then
-                    categories.type = pattern
-                    break
+        local type_patterns = getPatterns(global_patterns.type)
+        for _, pattern in ipairs(type_patterns) do
+            -- For type patterns, we specifically look inside square brackets
+            if item_name_lower:match("%[.*" .. pattern:lower() .. ".*%]") then
+                categories.type = pattern
+                if log_matches then
+                    ImportScript.LogMessage("Detected type pattern: '" .. pattern .. "' in '" .. item_name .. "'", "PATTERN")
                 end
+                break
             end
         end
     end
@@ -801,21 +944,62 @@ function GenerateTrackNameFromCategories(base_name, categories)
     -- Start with base name
     local track_name = base_name
     
-    -- Add categories in the specified order
-    local ordered_fields = {"prefix", "tracking", "subtype", "arrangement", "performer", "section", "layers", "mic", "playlist", "type"}
-    
-    -- Build additional name parts
+    -- Add categories in the user-specified order with proper formatting
     local name_parts = {}
     
-    for _, field in ipairs(ordered_fields) do
-        if categories[field] then
-            table.insert(name_parts, categories[field])
-        end
+    -- Start with the prefix (no special formatting)
+    if categories.prefix then
+        track_name = categories.prefix
     end
     
-    -- Add name parts to base name if we have any
+    -- Add tracking info in square brackets
+    if categories.tracking then
+        name_parts[#name_parts + 1] = "[" .. categories.tracking .. "]"
+    end
+    
+    -- Add subtype
+    if categories.subtype then
+        name_parts[#name_parts + 1] = categories.subtype
+    end
+    
+    -- Add arrangement
+    if categories.arrangement then
+        name_parts[#name_parts + 1] = categories.arrangement
+    end
+    
+    -- Add performer in parentheses
+    if categories.performer then
+        name_parts[#name_parts + 1] = "(" .. categories.performer .. ")"
+    end
+    
+    -- Add section
+    if categories.section then
+        name_parts[#name_parts + 1] = categories.section
+    end
+    
+    -- Add layers
+    if categories.layers then
+        name_parts[#name_parts + 1] = categories.layers
+    end
+    
+    -- Add mic
+    if categories.mic then
+        name_parts[#name_parts + 1] = categories.mic
+    end
+    
+    -- Add playlist
+    if categories.playlist then
+        name_parts[#name_parts + 1] = categories.playlist
+    end
+    
+    -- Add type in parentheses
+    if categories.type then
+        name_parts[#name_parts + 1] = "(" .. categories.type .. ")"
+    end
+    
+    -- Build the track name by joining all parts with spaces
     if #name_parts > 0 then
-        track_name = track_name .. " (" .. table.concat(name_parts, ", ") .. ")"
+        track_name = track_name .. " " .. table.concat(name_parts, " ")
     end
     
     return track_name
@@ -1004,10 +1188,9 @@ function ImportScript.OrganizeSelectedItems()
         
         -- Extract pattern categories from item name for possible track renaming
         local categories = {}
-        if item_data.config.rename_track then
-            categories = ExtractPatternCategories(item_data.name, global_patterns)
-            ImportScript.DebugPrint("  Extracted categories for track renaming: " .. ImportScript.GetTableSize(categories))
-        end
+        -- Always extract categories for item name generation, regardless of rename_track setting
+        categories = ExtractPatternCategories(item_data.name, global_patterns, true)
+        ImportScript.DebugPrint("  Extracted categories for item name generation: " .. ImportScript.GetTableSize(categories))
         
         -- Check if we already have tracks for this configuration
         local config_tracks = created_tracks[item_data.config_name] or {}
@@ -1190,6 +1373,25 @@ function ImportScript.OrganizeSelectedItems()
             end
         else
             destination_track = best_track.track
+            
+            -- Always try to rename the track with pattern categories, regardless of rename_track setting
+            -- Extract categories if we haven't already done so
+            if not next(categories) then
+                categories = ExtractPatternCategories(item_data.name, global_patterns, true)
+                ImportScript.DebugPrint("  Re-extracting categories for track renaming: " .. ImportScript.GetTableSize(categories))
+            end
+            
+            -- If we have pattern categories, generate a full name for the track
+            if next(categories) then
+                local generated_name = GenerateTrackNameFromCategories(base_track_name, categories)
+                if generated_name ~= best_track.name then
+                    ImportScript.DebugPrint("  Renaming existing track from '" .. best_track.name .. "' to '" .. generated_name .. "'")
+                    reaper.GetSetMediaTrackInfo_String(destination_track, "P_NAME", generated_name, true)
+                    best_track.name = generated_name
+                    ImportScript.LogMessage("Renamed track to '" .. generated_name .. "'", "TRACK")
+                end
+            end
+            
             ImportScript.DebugPrint("  Using existing track: '" .. best_track.name .. "'")
         end
         
@@ -1204,6 +1406,30 @@ function ImportScript.OrganizeSelectedItems()
                 start = item_data.start,
                 end_time = item_data.end_time
             })
+            
+            -- Generate the full pattern-based name for the item
+            local item_name_to_use = best_track.name
+            
+            -- Always try to generate a full pattern-based name, regardless of rename_track setting
+            -- Extract categories if we haven't already
+            if not next(categories) then
+                categories = ExtractPatternCategories(item_data.name, global_patterns, true)
+                ImportScript.DebugPrint("  Re-extracting categories for item renaming: " .. ImportScript.GetTableSize(categories))
+            end
+            
+            -- If we have pattern categories, generate a full name
+            if next(categories) then
+                local generated_name = GenerateTrackNameFromCategories(base_track_name, categories)
+                ImportScript.LogMessage("Generated full name: '" .. generated_name .. "' (track name: '" .. best_track.name .. "')", "RENAME")
+                item_name_to_use = generated_name
+            end
+            
+            -- Rename the item's take to match the full name
+            local take = reaper.GetActiveTake(item_data.item)
+            if take then
+                reaper.GetSetMediaItemTakeInfo_String(take, "P_NAME", item_name_to_use, true)
+                ImportScript.LogMessage("Renamed item to '" .. item_name_to_use .. "'", "RENAME")
+            end
             
             items_organized = items_organized + 1
             ImportScript.LogMessage("Moved item '" .. item_data.name .. "' to track '" .. best_track.name .. "'", "MOVE")
@@ -1314,7 +1540,6 @@ function ImportScript.OrganizeSelectedItems()
     if deleted_tracks > 0 then
         ImportScript.DebugPrint("Empty tracks deleted: " .. deleted_tracks)
     end
-    ImportScript.DebugPrint("===============================\n")
     
     -- Add summary to logs
     ImportScript.LogMessage("Organization complete: " .. items_organized .. " items organized, " .. items_skipped .. " items skipped", "SUMMARY")
@@ -1437,7 +1662,161 @@ function ImportScript.SaveConfigs(configs)
     reaper.SetExtState("FastTrackStudio_ImportByName", "configs", configs_json, true)
 end
 
--- #endregion
+-- Analyze selected items for pattern matches
+function ImportScript.AnalyzeSelectedItems()
+    -- Debug output to console for troubleshooting
+    reaper.ShowConsoleMsg("\n=== AnalyzeSelectedItems Function Called ===\n")
+    
+    -- Check if any items are selected
+    local item_count = reaper.CountSelectedMediaItems(0)
+    if item_count == 0 then
+        reaper.ShowMessageBox("No items selected. Please select items to analyze.", "No Items Selected", 0)
+        ImportScript.LogMessage("Analysis failed: No items selected", "ERROR")
+        return
+    end
+    
+    -- Log the start of analysis (once at the beginning)
+    ImportScript.LogMessage("Starting pattern analysis for " .. item_count .. " selected items", "ANALYZE")
+    
+    -- Load required modules
+    local PatternMatching = dofile(reaper.GetResourcePath() .. "/Scripts/FastTrackStudio Scripts/libraries/utils/Pattern Matching.lua")
+    
+    -- Get available track configurations
+    local track_configs = ImportScript.LoadTrackConfigs()
+    
+    -- Load global patterns for category extraction
+    local DefaultPatterns = require("default_patterns")
+    local ext_state_name = "FastTrackStudio_ImportByName"
+    local global_patterns = DefaultPatterns.LoadGlobalPatterns(ext_state_name, ImportScript)
+    
+    -- Debug: Output number of track configs and global patterns
+    reaper.ShowConsoleMsg("Track configs: " .. (next(track_configs) and table.concat(GetTableKeys(track_configs), ", ") or "None") .. "\n")
+    reaper.ShowConsoleMsg("Global patterns available: " .. (global_patterns and "Yes" or "No") .. "\n")
+    
+    -- Log available patterns
+    ImportScript.LogMessage("Available pattern categories:", "PATTERN")
+    for category, patterns in pairs(global_patterns) do
+        if patterns.patterns and #patterns.patterns > 0 then
+            ImportScript.LogMessage("  - " .. category .. ": " .. table.concat(patterns.patterns, ", "), "PATTERN")
+        end
+    end
+    
+    -- Analyze each selected item
+    for i = 0, item_count - 1 do
+        local item = reaper.GetSelectedMediaItem(0, i)
+        local take = reaper.GetActiveTake(item)
+        
+        if take then
+            local _, take_name = reaper.GetSetMediaItemTakeInfo_String(take, "P_NAME", "", false)
+            
+            -- Log item separator and name
+            ImportScript.LogMessage("---------------------------------------", "ANALYZE")
+            ImportScript.LogMessage("Analyzing item: '" .. take_name .. "'", "ANALYZE")
+            
+            -- Find matching track configurations
+            local matched_configs = {}
+            
+            for name, config in pairs(track_configs) do
+                if config.patterns and #config.patterns > 0 then
+                    local matches, pattern = PatternMatching.MatchesAnyPattern(take_name, config.patterns)
+                    if matches then
+                        -- Check negative patterns
+                        local negative_match = PatternMatching.MatchesNegativePattern(take_name, config.negative_patterns or {})
+                        if not negative_match then
+                            table.insert(matched_configs, {
+                                name = name,
+                                pattern = pattern,
+                                config = config
+                            })
+                        end
+                    end
+                end
+            end
+            
+            -- Log matched configurations
+            if #matched_configs > 0 then
+                ImportScript.LogMessage("Group Matches:", "ANALYZE")
+                for _, match in ipairs(matched_configs) do
+                    ImportScript.LogMessage("  - " .. match.name .. " (pattern: " .. match.pattern .. ")", "ANALYZE")
+                    
+                    -- Show destination track
+                    local destination = match.config.destination_track or match.name
+                    ImportScript.LogMessage("    → Destination track: " .. destination, "ANALYZE")
+                    
+                    -- Show parent track if set
+                    if match.config.parent_track and match.config.parent_track ~= "" then
+                        ImportScript.LogMessage("    → Parent folder: " .. match.config.parent_track, "ANALYZE")
+                    end
+                    
+                    -- Show rename track setting
+                    local configs = ImportScript.LoadConfigs()
+                    local rename_state = "No"
+                    if configs.global_rename_track then
+                        rename_state = "Yes (from global setting)"
+                    elseif match.config.rename_track then
+                        rename_state = "Yes (from track config)"
+                    end
+                    ImportScript.LogMessage("    → Rename track: " .. rename_state, "ANALYZE")
+                end
+            else
+                ImportScript.LogMessage("Group Matches: None - will go to NOT SORTED folder", "ANALYZE")
+            end
+            
+            -- Extract and log pattern categories
+            local categories = ExtractPatternCategories(take_name, global_patterns, true)
+            
+            -- Log each category type
+            ImportScript.LogMessage("Pattern Categories:", "ANALYZE")
+            
+            -- Create an ordered list of categories to check
+            local category_order = {
+                {"Prefix", "prefix"},
+                {"Tracking Info", "tracking"},
+                {"SubType", "subtype"},
+                {"Arrangement", "arrangement"},
+                {"Performer", "performer"},
+                {"Section", "section"},
+                {"Layers", "layers"},
+                {"Mic", "mic"},
+                {"Playlist", "playlist"},
+                {"Type", "type"}
+            }
+            
+            -- Check each category in order
+            for _, cat in ipairs(category_order) do
+                local display_name = cat[1]
+                local key = cat[2]
+                
+                if categories[key] then
+                    ImportScript.LogMessage("  - " .. display_name .. ": " .. categories[key], "ANALYZE")
+                else
+                    ImportScript.LogMessage("  - " .. display_name .. ": None", "ANALYZE")
+                end
+            end
+            
+            -- Generate track name based on patterns
+            if #matched_configs > 0 then
+                local config = matched_configs[1].config
+                local configs = ImportScript.LoadConfigs()
+                -- Check if global rename is enabled or track config has rename enabled
+                if configs.global_rename_track or config.rename_track then
+                    local base_name = config.destination_track or matched_configs[1].name
+                    local track_name = GenerateTrackNameFromCategories(base_name, categories)
+                    ImportScript.LogMessage("Generated track name: '" .. track_name .. "'", "ANALYZE")
+                end
+            end
+        else
+            ImportScript.LogMessage("Item #" .. i+1 .. " has no active take, skipping", "ANALYZE")
+        end
+    end
+    
+    ImportScript.LogMessage("Analysis complete for " .. item_count .. " items", "ANALYZE")
+    ImportScript.LogMessage("See the 'Logs' tab for detailed results", "ANALYZE")
+    
+    -- Set status message
+    ImportScript.LastMessage = "Analysis complete for " .. item_count .. " items. See Logs tab for details."
+    ImportScript.LastMessageTime = os.time()
+end
 
 -- Load modules
 local Utils = require("utils")
@@ -1471,5 +1850,6 @@ return {
     LogMessage = ImportScript.LogMessage,
     ClearLogs = ImportScript.ClearLogs,
     GetLogs = ImportScript.GetLogs,
-    LogMessages = ImportScript.LogMessages
+    LogMessages = ImportScript.LogMessages,
+    AnalyzeSelectedItems = ImportScript.AnalyzeSelectedItems
 } 

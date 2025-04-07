@@ -45,7 +45,8 @@ local log_filter = {
     move = true,
     error = true,
     summary = true,
-    system = true
+    system = true,
+    analyze = true -- Add filter for analyze logs
 }
 
 -- Log colors for different categories
@@ -60,6 +61,7 @@ local log_colors = {
     ERROR = 0xFF8888FF,     -- Red
     SUMMARY = 0xFFFFAAFF,   -- Yellow
     SYSTEM = 0xBBBBBBFF,    -- Gray
+    ANALYZE = 0xCCAAFFFF,   -- Purple
     DEFAULT = 0xFFFFFFFF    -- White
 }
 
@@ -204,7 +206,7 @@ function MainGUI.DrawMainUI(ctx)
     -- Main Action Buttons - Side by side at the top
     local buttonHeight = 36
     local availWidth = reaper.ImGui_GetContentRegionAvail(ctx)
-    local buttonWidth = availWidth / 2 - 4 -- Divided by 2 with a small gap
+    local buttonWidth = availWidth / 3 - 4 -- Divided by 3 with small gaps
     
     reaper.ImGui_PushStyleVar(ctx, reaper.ImGui_StyleVar_FramePadding(), 8, 8)
     
@@ -225,6 +227,18 @@ function MainGUI.DrawMainUI(ctx)
             import_script.OrganizeSelectedItems()
         else
             reaper.ShowMessageBox("Organize selected items functionality not implemented in this version.", "Feature Not Available", 0)
+        end
+    end
+    
+    reaper.ImGui_SameLine(ctx)
+    
+    -- Analyze Selected Items button
+    if reaper.ImGui_Button(ctx, "Analyze Selected Items", buttonWidth, buttonHeight) then
+        if import_script and import_script.AnalyzeSelectedItems then
+            import_script.AnalyzeSelectedItems()
+            -- No longer forcing a tab change
+        else
+            reaper.ShowMessageBox("Analyze selected items functionality not implemented in this version.", "Feature Not Available", 0)
         end
     end
     
@@ -326,31 +340,36 @@ function MainGUI.DrawMainUI(ctx)
     -- Tabs bar
     if reaper.ImGui_BeginTabBar(ctx, "MainTabs") then
         -- Configuration tab
-        if reaper.ImGui_BeginTabItem(ctx, tabs[1]) then
+        if reaper.ImGui_BeginTabItem(ctx, tabs[1], true) then
+            -- Draw the tab content
             TrackConfig.DrawConfigTab(ctx, ext_state_name, import_script)
             reaper.ImGui_EndTabItem(ctx)
         end
         
         -- Global Patterns tab
-        if reaper.ImGui_BeginTabItem(ctx, tabs[2]) then
+        if reaper.ImGui_BeginTabItem(ctx, tabs[2], true) then
+            -- Draw the tab content
             DefaultPatterns.DrawGlobalPatternsTab(ctx, ext_state_name, MainGUI.loadExtStateTable, MainGUI.saveExtStateTable)
             reaper.ImGui_EndTabItem(ctx)
         end
         
         -- Import/Export tab
-        if reaper.ImGui_BeginTabItem(ctx, tabs[3]) then
+        if reaper.ImGui_BeginTabItem(ctx, tabs[3], true) then
+            -- Draw the tab content
             ImportExport.DrawImportExportTab(ctx, ext_state_name, import_script)
             reaper.ImGui_EndTabItem(ctx)
         end
         
         -- Logs tab
-        if reaper.ImGui_BeginTabItem(ctx, tabs[4]) then
+        if reaper.ImGui_BeginTabItem(ctx, tabs[4], true) then
+            -- Draw the tab content
             MainGUI.DrawLogsTab(ctx)
             reaper.ImGui_EndTabItem(ctx)
         end
         
         -- Help tab
-        if reaper.ImGui_BeginTabItem(ctx, tabs[5]) then
+        if reaper.ImGui_BeginTabItem(ctx, tabs[5], true) then
+            -- Draw the tab content
             MainGUI.DrawHelpTab(ctx)
             reaper.ImGui_EndTabItem(ctx)
         end
@@ -361,66 +380,70 @@ end
 
 -- Draw the help tab
 function MainGUI.DrawHelpTab(ctx)
-    reaper.ImGui_BeginChild(ctx, "##HelpChild", 0, 0, true)
-    
-    -- Help header
-    if font_bold then
-        reaper.ImGui_PushFont(ctx, font_bold)
-        reaper.ImGui_Text(ctx, "How to Use")
-        reaper.ImGui_PopFont(ctx)
-    else
-        reaper.ImGui_TextColored(ctx, 0xFFAA33FF, "How to Use")
+    -- Create a child window for the help content
+    if reaper.ImGui_BeginChild(ctx, "##HelpChild", 0, 0, true) then
+        -- Help header
+        if font_bold then
+            reaper.ImGui_PushFont(ctx, font_bold)
+            reaper.ImGui_Text(ctx, "How to Use")
+            reaper.ImGui_PopFont(ctx)
+        else
+            reaper.ImGui_TextColored(ctx, 0xFFAA33FF, "How to Use")
+        end
+        
+        reaper.ImGui_Spacing(ctx)
+        reaper.ImGui_TextWrapped(ctx, "This script helps organize your workflow by automatically managing track templates and naming conventions.")
+        reaper.ImGui_Spacing(ctx)
+        
+        -- Basic workflow section
+        if font_bold then
+            reaper.ImGui_PushFont(ctx, font_bold)
+            reaper.ImGui_Text(ctx, "Basic Workflow")
+            reaper.ImGui_PopFont(ctx)
+        else
+            reaper.ImGui_TextColored(ctx, 0xFFAA33FF, "Basic Workflow")
+        end
+        reaper.ImGui_Spacing(ctx)
+        reaper.ImGui_TextWrapped(ctx, "To use this script effectively:")
+        reaper.ImGui_BulletText(ctx, "1. Set up track configurations that match your recording workflow")
+        reaper.ImGui_BulletText(ctx, "2. Configure naming patterns for consistency")
+        reaper.ImGui_BulletText(ctx, "3. Select media files to import")
+        reaper.ImGui_BulletText(ctx, "4. Run the importer to automatically place files on appropriate tracks")
+        reaper.ImGui_BulletText(ctx, "5. Export your setup for reuse across projects")
+        reaper.ImGui_Spacing(ctx)
+        
+        -- Tips section
+        if font_bold then
+            reaper.ImGui_PushFont(ctx, font_bold)
+            reaper.ImGui_Text(ctx, "Tips")
+            reaper.ImGui_PopFont(ctx)
+        else
+            reaper.ImGui_TextColored(ctx, 0xFFAA33FF, "Tips")
+        end
+        reaper.ImGui_Spacing(ctx)
+        
+        reaper.ImGui_BulletText(ctx, "Use consistent file naming conventions to make matching easier")
+        reaper.ImGui_BulletText(ctx, "Set up default configurations for your common recording scenarios")
+        reaper.ImGui_BulletText(ctx, "Preview how file names will be analyzed in the import dialog")
+        reaper.ImGui_BulletText(ctx, "Back up your configurations regularly with the export feature")
+        reaper.ImGui_Spacing(ctx)
+        
+        -- Version and credits
+        reaper.ImGui_Separator(ctx)
+        reaper.ImGui_Spacing(ctx)
+        reaper.ImGui_Text(ctx, "FastTrackStudio Import Into Template By Name")
+        reaper.ImGui_Text(ctx, "Version: 2.0.0")
+        reaper.ImGui_Text(ctx, "Author: Cody Hanson / FastTrackStudio")
+        
+        reaper.ImGui_EndChild(ctx)
     end
-    
-    reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_TextWrapped(ctx, "This script helps organize your workflow by automatically managing track templates and naming conventions.")
-    reaper.ImGui_Spacing(ctx)
-    
-    -- Basic workflow section
-    if font_bold then
-        reaper.ImGui_PushFont(ctx, font_bold)
-        reaper.ImGui_Text(ctx, "Basic Workflow")
-        reaper.ImGui_PopFont(ctx)
-    else
-        reaper.ImGui_TextColored(ctx, 0xFFAA33FF, "Basic Workflow")
-    end
-    reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_TextWrapped(ctx, "To use this script effectively:")
-    reaper.ImGui_BulletText(ctx, "1. Set up track configurations that match your recording workflow")
-    reaper.ImGui_BulletText(ctx, "2. Configure naming patterns for consistency")
-    reaper.ImGui_BulletText(ctx, "3. Select media files to import")
-    reaper.ImGui_BulletText(ctx, "4. Run the importer to automatically place files on appropriate tracks")
-    reaper.ImGui_BulletText(ctx, "5. Export your setup for reuse across projects")
-    reaper.ImGui_Spacing(ctx)
-    
-    -- Tips section
-    if font_bold then
-        reaper.ImGui_PushFont(ctx, font_bold)
-        reaper.ImGui_Text(ctx, "Tips")
-        reaper.ImGui_PopFont(ctx)
-    else
-        reaper.ImGui_TextColored(ctx, 0xFFAA33FF, "Tips")
-    end
-    reaper.ImGui_Spacing(ctx)
-    
-    reaper.ImGui_BulletText(ctx, "Use consistent file naming conventions to make matching easier")
-    reaper.ImGui_BulletText(ctx, "Set up default configurations for your common recording scenarios")
-    reaper.ImGui_BulletText(ctx, "Preview how file names will be analyzed in the import dialog")
-    reaper.ImGui_BulletText(ctx, "Back up your configurations regularly with the export feature")
-    reaper.ImGui_Spacing(ctx)
-    
-    -- Version and credits
-    reaper.ImGui_Separator(ctx)
-    reaper.ImGui_Spacing(ctx)
-    reaper.ImGui_Text(ctx, "FastTrackStudio Import Into Template By Name")
-    reaper.ImGui_Text(ctx, "Version: 2.0.0")
-    reaper.ImGui_Text(ctx, "Author: Cody Hanson / FastTrackStudio")
-    
-    reaper.ImGui_EndChild(ctx)
 end
 
 -- Draw the logs tab
 function MainGUI.DrawLogsTab(ctx)
+    -- Wrap everything in a child window to ensure proper rendering
+    reaper.ImGui_BeginChild(ctx, "##LogsTabContainer", 0, 0, false)
+    
     local availWidth = reaper.ImGui_GetContentRegionAvail(ctx)
     
     -- Top controls row
@@ -441,128 +464,136 @@ function MainGUI.DrawLogsTab(ctx)
         end
         
         -- Copy to clipboard using REAPER API
-        reaper.CF_SetClipboard(log_text)
+        if reaper.CF_SetClipboard then
+            reaper.CF_SetClipboard(log_text)
+        else
+            reaper.ShowConsoleMsg("Clipboard functionality requires SWS Extensions\n")
+        end
     end
     
     -- Category filters
     reaper.ImGui_SameLine(ctx, availWidth - 300)
     reaper.ImGui_Text(ctx, "Filters:")
     
-    -- Create filter checkboxes
-    reaper.ImGui_BeginChild(ctx, "##FiltersRegion", 0, 30, false)
+    -- Create filter checkboxes in a horizontal layout
     local x_pos = 60
     
-    -- Organize filter
+    -- First row of filters
     reaper.ImGui_SetCursorPosX(ctx, x_pos)
     local changed, value = reaper.ImGui_Checkbox(ctx, "Organize", log_filter.organize)
     if changed then log_filter.organize = value end
     x_pos = x_pos + 80
     
-    -- Match filter
     reaper.ImGui_SameLine(ctx, x_pos)
     changed, value = reaper.ImGui_Checkbox(ctx, "Match", log_filter.match)
     if changed then log_filter.match = value end
     x_pos = x_pos + 70
     
-    -- Track filter
     reaper.ImGui_SameLine(ctx, x_pos)
     changed, value = reaper.ImGui_Checkbox(ctx, "Track", log_filter.track)
     if changed then log_filter.track = value end
     x_pos = x_pos + 70
     
-    -- Error filter
     reaper.ImGui_SameLine(ctx, x_pos)
     changed, value = reaper.ImGui_Checkbox(ctx, "Error", log_filter.error)
     if changed then log_filter.error = value end
-    x_pos = x_pos + 70
     
-    -- More filter buttons on next row
+    -- Second row of filters
     reaper.ImGui_SetCursorPosX(ctx, 60)
     
-    -- Create filter
     changed, value = reaper.ImGui_Checkbox(ctx, "Create", log_filter.create)
     if changed then log_filter.create = value end
     
-    -- Move filter
     reaper.ImGui_SameLine(ctx)
     changed, value = reaper.ImGui_Checkbox(ctx, "Move", log_filter.move)
     if changed then log_filter.move = value end
     
-    -- Overlap filter
     reaper.ImGui_SameLine(ctx)
     changed, value = reaper.ImGui_Checkbox(ctx, "Overlap", log_filter.overlap)
     if changed then log_filter.overlap = value end
     
-    -- Summary filter
     reaper.ImGui_SameLine(ctx)
     changed, value = reaper.ImGui_Checkbox(ctx, "Summary", log_filter.summary)
     if changed then log_filter.summary = value end
     
-    reaper.ImGui_EndChild(ctx)
+    reaper.ImGui_SameLine(ctx)
+    changed, value = reaper.ImGui_Checkbox(ctx, "Analyze", log_filter.analyze)
+    if changed then log_filter.analyze = value end
     
     -- Draw log messages with colors
     reaper.ImGui_Separator(ctx)
     
     -- Calculate logs area height (subtract filter area and some padding)
-    local logsHeight = reaper.ImGui_GetContentRegionAvail(ctx)
+    local logsHeight = reaper.ImGui_GetContentRegionAvail(ctx) - 20
     
     -- Create a child window with border for the logs
-    reaper.ImGui_BeginChild(ctx, "##LogsRegion", 0, logsHeight, true)
-    
-    -- Get logs from import_script
-    local logs = import_script and import_script.GetLogs and import_script.GetLogs() or {}
-    
-    -- If no logs, show a message
-    if #logs == 0 then
-        reaper.ImGui_SetCursorPosY(ctx, reaper.ImGui_GetCursorPosY(ctx) + 10)
-        reaper.ImGui_SetCursorPosX(ctx, (availWidth - 250) / 2)
-        reaper.ImGui_TextColored(ctx, 0xAAAAAAAA, "No log messages to display")
-        reaper.ImGui_SetCursorPosY(ctx, reaper.ImGui_GetCursorPosY(ctx) + 10)
-        reaper.ImGui_SetCursorPosX(ctx, (availWidth - 350) / 2)
-        reaper.ImGui_TextColored(ctx, 0xAAAAAAAA, "Organize items or import files to generate logs")
-    else
-        -- Display logs with colors based on category
-        for _, log in ipairs(logs) do
-            -- Extract category if it exists
-            local category = log:match("%[([%u]+)%]")
-            local should_show = true
-            
-            -- Apply filters
-            if category then
-                local category_lower = category:lower()
-                if category_lower == "organize" and not log_filter.organize then should_show = false end
-                if category_lower == "match" and not log_filter.match then should_show = false end
-                if category_lower == "unmatch" and not log_filter.unmatch then should_show = false end
-                if category_lower == "track" and not log_filter.track then should_show = false end
-                if category_lower == "overlap" and not log_filter.overlap then should_show = false end
-                if category_lower == "create" and not log_filter.create then should_show = false end
-                if category_lower == "move" and not log_filter.move then should_show = false end
-                if category_lower == "error" and not log_filter.error then should_show = false end
-                if category_lower == "summary" and not log_filter.summary then should_show = false end
-                if category_lower == "system" and not log_filter.system then should_show = false end
-            end
-            
-            -- If the log should be shown according to filters
-            if should_show then
-                -- Determine color based on category
-                local textColor = log_colors.DEFAULT
+    if reaper.ImGui_BeginChild(ctx, "##LogsRegion", 0, logsHeight, true) then
+        -- Get logs from import_script
+        local logs = import_script and import_script.GetLogs and import_script.GetLogs() or {}
+        
+        -- If no logs, show a message
+        if #logs == 0 then
+            reaper.ImGui_SetCursorPosY(ctx, reaper.ImGui_GetCursorPosY(ctx) + 10)
+            reaper.ImGui_SetCursorPosX(ctx, (availWidth - 250) / 2)
+            reaper.ImGui_TextColored(ctx, 0xAAAAAAAA, "No log messages to display")
+            reaper.ImGui_SetCursorPosY(ctx, reaper.ImGui_GetCursorPosY(ctx) + 10)
+            reaper.ImGui_SetCursorPosX(ctx, (availWidth - 350) / 2)
+            reaper.ImGui_TextColored(ctx, 0xAAAAAAAA, "Organize items or import files to generate logs")
+        else
+            -- Display logs with colors based on category
+            for _, log in ipairs(logs) do
+                -- Extract category if it exists
+                local category = log:match("%[([%u]+)%]")
+                local should_show = true
                 
+                -- Apply filters
                 if category then
-                    textColor = log_colors[category] or log_colors.DEFAULT
+                    local category_lower = category:lower()
+                    if category_lower == "organize" and not log_filter.organize then should_show = false end
+                    if category_lower == "match" and not log_filter.match then should_show = false end
+                    if category_lower == "unmatch" and not log_filter.unmatch then should_show = false end
+                    if category_lower == "track" and not log_filter.track then should_show = false end
+                    if category_lower == "overlap" and not log_filter.overlap then should_show = false end
+                    if category_lower == "create" and not log_filter.create then should_show = false end
+                    if category_lower == "move" and not log_filter.move then should_show = false end
+                    if category_lower == "error" and not log_filter.error then should_show = false end
+                    if category_lower == "summary" and not log_filter.summary then should_show = false end
+                    if category_lower == "system" and not log_filter.system then should_show = false end
+                    if category_lower == "analyze" and not log_filter.analyze then should_show = false end
                 end
                 
-                -- Output the log with appropriate color
-                reaper.ImGui_TextColored(ctx, textColor, log)
+                -- If the log should be shown according to filters
+                if should_show then
+                    -- Determine color based on category
+                    local textColor = log_colors.DEFAULT
+                    
+                    if category then
+                        textColor = log_colors[category] or log_colors.DEFAULT
+                    end
+                    
+                    -- Output the log with appropriate color
+                    reaper.ImGui_TextColored(ctx, textColor, log)
+                end
             end
         end
+        
+        -- If user scrolls to bottom, auto-scroll to new items
+        if reaper.ImGui_GetScrollY(ctx) >= reaper.ImGui_GetScrollMaxY(ctx) - 20 then
+            reaper.ImGui_SetScrollHereY(ctx, 1.0)
+        end
+        
+        reaper.ImGui_EndChild(ctx)
     end
     
-    -- If user scrolls to bottom, auto-scroll to new items
-    if reaper.ImGui_GetScrollY(ctx) >= reaper.ImGui_GetScrollMaxY(ctx) - 20 then
-        reaper.ImGui_SetScrollHereY(ctx, 1.0)
-    end
-    
-    reaper.ImGui_EndChild(ctx)
+    reaper.ImGui_EndChild(ctx) -- End the main LogsTabContainer
+end
+
+-- Function to change tabs programmatically (now just a stub)
+function MainGUI.SetActiveTab(index)
+    -- This function is deprecated and no longer forces tab changes
+    -- It's kept as a stub for backward compatibility
+    reaper.ShowConsoleMsg("\nNote: Tab selection is now controlled by ImGui. The SetActiveTab function is deprecated.\n")
+    return false
 end
 
 return MainGUI 

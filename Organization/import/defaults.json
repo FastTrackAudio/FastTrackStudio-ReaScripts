@@ -1,1 +1,240 @@
-{"default_patterns":{"performer":["Vocalist","Drummer","Guitarist","Bassist","Keyboardist"],"subtype":["Clean","Distorted","Hard","Soft","High","Low","Electric","Acoustic"],"arrangement":["Verse","Chorus","Bridge","Intro","Outro","Pre","Post"],"section":["A","B","C","Break","Fill","Solo"],"type":["BUS","SUM","MIDI","SAMPLE","WAV","AUDIO","VSTi"],"layers":["Double","Layer","Octave","Fifth","Harmony"],"playlist":[".1",".2",".3",".4",".5"],"tracking":["Take","Comp","Alt","V1","V2","Version"],"mic":["SM57","U87","MD421","D112","Room","OH","Close","Far","Spot"]},"default_groups":[{"pattern_categories":{"prefix":{"patterns":["Drum","Kit"]},"type":{"patterns":["DRUM","PERC"]}},"patterns":["drum","kick","snare","hat","tom","cymbal"],"name":"Drums","destination_track":"Drums","insert_mode":"increment","increment_start":1,"parent_track":"DRUMS","only_number_when_multiple":true},{"pattern_categories":{"prefix":{"patterns":["Gtr","Guitar"]},"type":{"patterns":["GTR"]}},"patterns":["gtr","guitar","acoustic"],"name":"Guitars","destination_track":"Guitars","insert_mode":"increment","increment_start":1,"parent_track":"GUITARS","only_number_when_multiple":true},{"pattern_categories":{"prefix":{"patterns":["Bass","Bs"]},"type":{"patterns":["BASS"]}},"patterns":["bass","bs"],"name":"Bass","destination_track":"Bass","insert_mode":"increment","increment_start":1,"parent_track":"BASS","only_number_when_multiple":true},{"pattern_categories":{"prefix":{"patterns":["Vox","Vocal"]},"type":{"patterns":["VOX"]}},"patterns":["vox","vocal","voice","sing"],"name":"Vocals","destination_track":"Vocals","insert_mode":"increment","increment_start":1,"parent_track":"VOCALS","only_number_when_multiple":true},{"pattern_categories":{"prefix":{"patterns":["Synth","Keys"]},"type":{"patterns":["SYNTH"]}},"patterns":["synth","pad","lead","arp","keys"],"name":"Synths","destination_track":"Synths","insert_mode":"increment","increment_start":1,"parent_track":"SYNTHS","only_number_when_multiple":true}]}
+{
+  "default_patterns": {
+    "performer": ["Cody"],
+    "subtype": ["Clean"],
+    "arrangement": [
+      "Lead",
+      "Rhyth",
+      "Solo",
+      "Amb",
+      "Big",
+      "Little",
+      "Crunch",
+      "Drive",
+      "Pad"
+    ],
+    "section": [
+      "A",
+      "B",
+      "C",
+      "Break",
+      "Fill",
+      "Solo",
+      "Verse",
+      "Chorus",
+      "Bridge",
+      "Intro",
+      "Outro",
+      "Pre",
+      "Post"
+    ],
+    "type": ["BUS", "SUM", "MIDI", "SAMPLE", "WAV", "AUDIO", "VSTi"],
+    "layers": ["Double", "Layer", "Octave", "Fifth", "Harmony", "L", "R"],
+    "playlist": [".1", ".2", ".3", ".4", ".5"],
+    "tracking": ["Take", "Comp", "Alt", "V1", "V2", "Version"],
+    "mic": [
+      "SM57",
+      "U87",
+      "MD421",
+      "D112",
+      "Room",
+      "OH",
+      "Close",
+      "Far",
+      "Spot"
+    ]
+  },
+  "default_groups": [
+    {
+      "name": "Reference",
+      "patterns": ["print", "master", "smart tempo multitrack"],
+      "parent_track": "REF TRACK",
+      "destination_track": "REF TRACK",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "Synth",
+      "patterns": ["synth", "nord", "casio", "fa06", "charang", "briteness"],
+      "parent_track": "SYNTHS",
+      "destination_track": "SY",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "create_if_missing": true,
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "HiHat",
+      "patterns": ["hi hat", "hihat", "hi%-hat", "hh", "hat"],
+      "parent_track": "CYMBALS BUS",
+      "destination_track": "HiHat",
+      "insert_mode": "increment",
+      "negative_patterns": ["oh", "overhead"],
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "BGV",
+      "patterns": [
+        "bgv",
+        "backing vocal",
+        "background vocal",
+        "bgv%d+",
+        "harm"
+      ],
+      "parent_track": "V BGVs",
+      "destination_track": "BGV",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "extract_number": true,
+      "create_if_missing": true,
+      "negative_patterns": ["gtr harm", "guitar harm"],
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "Guitar",
+      "patterns": ["guitar", "gtr"],
+      "parent_track": "GTR ELEC",
+      "destination_track": "GTR E",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "Keys",
+      "patterns": ["keys", "piano", "pno", "nord", "rhodes", "wurli"],
+      "parent_track": "KEYS",
+      "destination_track": "Keys",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "create_if_missing": true,
+      "force_child": true,
+      "never_match_parent": true,
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "Percussion",
+      "patterns": ["perc"],
+      "parent_track": "PERC",
+      "destination_track": "PERC",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "Room",
+      "patterns": ["room", "rooms", "rm", "crotch", "mono u47", "mono"],
+      "parent_track": "ROOM BUS",
+      "destination_track": "Rooms",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "negative_patterns": [
+        "guitar",
+        "gtr",
+        "keys",
+        "synth",
+        "piano",
+        "pno",
+        "vocal",
+        "vox",
+        "harm"
+      ],
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "Overheads",
+      "patterns": ["oh", "overhead", "oh hat", "oh ride"],
+      "parent_track": "CYMBALS BUS",
+      "destination_track": "OH",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "priority": 2,
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "Toms",
+      "patterns": ["tom", "rack", "floor"],
+      "parent_track": "TOMS",
+      "destination_track": "Tom",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "create_if_missing": true,
+      "negative_patterns": ["bottom", "smart tempo"],
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "Kick",
+      "patterns": ["kick", "kik"],
+      "parent_track": "KICK SUM",
+      "destination_track": "Kick",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "negative_patterns": ["kickler"],
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "Snare",
+      "patterns": ["snare", "snr"],
+      "parent_track": "SNARE SUM",
+      "destination_track": "Snare",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "Bass",
+      "patterns": ["bass"],
+      "parent_track": "BASS",
+      "destination_track": "Bass",
+      "insert_mode": "existing",
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "LeadVocal",
+      "patterns": ["vocal", "vox", "lead vox"],
+      "parent_track": "VOCALS",
+      "destination_track": "V LEAD",
+      "insert_mode": "existing",
+      "negative_patterns": ["eko", "plate", "magic", "h3000", "bgv"],
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "VocalEffects",
+      "patterns": ["h3000", "eko", "plate", "magic"],
+      "parent_track": "Vox FX",
+      "destination_track": "V Room",
+      "insert_mode": "existing",
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "PrintedFX",
+      "patterns": [
+        "h3000",
+        "hall",
+        "plate",
+        "verb",
+        "eko",
+        "magic",
+        "fx",
+        "effect",
+        "delay",
+        "reverb"
+      ],
+      "parent_track": "PRINTED FX",
+      "destination_track": "FX",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "is_printed_fx": true,
+      "only_number_when_multiple": true
+    },
+    {
+      "name": "Ride",
+      "patterns": ["ride"],
+      "parent_track": "CYMBALS BUS",
+      "destination_track": "Ride",
+      "insert_mode": "increment",
+      "negative_patterns": ["oh", "overhead"],
+      "only_number_when_multiple": true
+    }
+  ]
+}
