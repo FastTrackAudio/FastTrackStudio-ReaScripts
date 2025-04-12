@@ -246,6 +246,30 @@ function MainGUI.DrawMainUI(ctx)
     
     reaper.ImGui_Spacing(ctx)
     
+    -- Test buttons for random name generation
+    local testButtonWidth = availWidth / 2 - 4
+    if reaper.ImGui_Button(ctx, "Test Random Names (Ordered)", testButtonWidth, buttonHeight) then
+        if import_script and import_script.TestRandomNameGeneration then
+            import_script.TestRandomNameGeneration(false)
+        else
+            reaper.ShowMessageBox("Random name generation functionality not implemented in this version.", "Feature Not Available", 0)
+        end
+    end
+    
+    reaper.ImGui_SameLine(ctx)
+    
+    if reaper.ImGui_Button(ctx, "Test Random Names (Random Order)", testButtonWidth, buttonHeight) then
+        if import_script and import_script.TestRandomNameGeneration then
+            import_script.TestRandomNameGeneration(true)
+        else
+            reaper.ShowMessageBox("Random name generation functionality not implemented in this version.", "Feature Not Available", 0)
+        end
+    end
+    
+    reaper.ImGui_Spacing(ctx)
+    reaper.ImGui_Separator(ctx)
+    reaper.ImGui_Spacing(ctx)
+    
     -- Status message display - Only show if message is recent (within 5 seconds)
     if import_script and import_script.LastMessage and import_script.LastMessage ~= "" then
         local currentTime = os.time()

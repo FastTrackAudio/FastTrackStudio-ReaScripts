@@ -186,79 +186,65 @@ function TrackManagement.CreateTrackFromTemplate(template_track, track_name, par
     return new_track
 end
 
--- Find or create a track with a specific name
-function TrackManagement.FindOrCreateTrack(track_name, template_track, parent_track, create_if_missing)
-    -- Try to find an existing track with the name
+-- Function to find or create a track
+function TrackManagement.FindOrCreateTrack(track_name, template_track, parent_track, ensure_visible)
+    -- Try to find existing track by name
     local track_count = reaper.CountTracks(0)
     for i = 0, track_count - 1 do
         local track = reaper.GetTrack(0, i)
-        local _, name = reaper.GetTrackName(track)
+        local _, existing_name = reaper.GetTrackName(track)
         
-        if name == track_name then
+        if existing_name == track_name then
             return track
         end
     end
     
-    -- If not found and create_if_missing is true, create a new track
-    if create_if_missing then
-        if template_track then
-            -- If we have a template, use it
-            return TrackManagement.CreateTrackFromTemplate(template_track, track_name, parent_track)
-        else
-            -- Create a basic track without a template
-            local insert_idx = 0
+    -- If not found, create a new track
+    -- First, find the correct insertion index
+    local insert_index = track_count
+    local parent_depth = 0
+    local parent_idx = -1
+    
+    -- If we have a parent track, find its index and depth
+    if parent_track then
+        parent_depth = reaper.GetMediaTrackInfo_Value(parent_track, "I_FOLDERDEPTH")
+        parent_idx = reaper.GetMediaTrackInfo_Value(parent_track, "IP_TRACKNUMBER") - 1
+        
+        -- Find the last child of the parent track
+        for i = parent_idx + 1, track_count - 1 do
+            local track = reaper.GetTrack(0, i)
+            local track_depth = reaper.GetMediaTrackInfo_Value(track, "I_FOLDERDEPTH")
             
-            -- Determine where to insert the new track
-            if parent_track then
-                -- Find the last child of the parent track
-                local last_child_idx = reaper.GetMediaTrackInfo_Value(parent_track, "IP_TRACKNUMBER") - 1
-                local parent_depth = reaper.GetTrackDepth(parent_track)
-                local track_count = reaper.CountTracks(0)
-                
-                for i = last_child_idx + 1, track_count - 1 do
-                    local track = reaper.GetTrack(0, i)
-                    local depth = reaper.GetTrackDepth(track)
-                    
-                    if depth <= parent_depth then
-                        break
-                    end
-                    
-                    last_child_idx = i
-                end
-                
-                insert_idx = last_child_idx + 1
-            else
-                -- Insert at the end of the project
-                insert_idx = reaper.CountTracks(0)
+            -- If we find a track at the same or lower depth as the parent, stop
+            if track_depth <= parent_depth then
+                insert_index = i
+                break
             end
-            
-            -- Create the new track
-            reaper.InsertTrackAtIndex(insert_idx, true)
-            local new_track = reaper.GetTrack(0, insert_idx)
-            
-            if not new_track then
-                return nil
-            end
-            
-            -- Set track name
-            if track_name and track_name ~= "" then
-                reaper.GetSetMediaTrackInfo_String(new_track, "P_NAME", track_name, true)
-            end
-            
-            -- Set folder depth if parent_track is provided
-            if parent_track then
-                reaper.SetTrackSelected(new_track, true)
-                reaper.SetTrackSelected(parent_track, true)
-                reaper.ReorderSelectedTracks(reaper.GetMediaTrackInfo_Value(parent_track, "IP_TRACKNUMBER"), 0)
-                reaper.SetOnlyTrackSelected(new_track)
-            end
-            
-            -- Ensure the track is visible in TCP and mixer
-            reaper.SetMediaTrackInfo_Value(new_track, "B_SHOWINTCP", 1)
-            reaper.SetMediaTrackInfo_Value(new_track, "B_SHOWINMIXER", 1)
-            
-            return new_track
         end
+    end
+    
+    -- Create the new track at the correct position
+    local new_track = reaper.InsertTrackAtIndex(insert_index, true)
+    if new_track then
+        -- Set the track name
+        reaper.GetSetMediaTrackInfo_String(new_track, "P_NAME", track_name, true)
+        
+        -- If parent track is provided, set it as a child
+        if parent_track then
+            -- Set the track as a child of the parent
+            reaper.SetMediaTrackInfo_Value(new_track, "P_PARTRACK", parent_track)
+            
+            -- Set the folder depth to be one level deeper than the parent
+            reaper.SetMediaTrackInfo_Value(new_track, "I_FOLDERDEPTH", parent_depth + 1)
+        end
+        
+        -- Ensure track is visible in TCP and mixer
+        if ensure_visible then
+            reaper.SetMediaTrackInfo_Value(new_track, "B_SHOWINMIXER", 1)
+            reaper.SetMediaTrackInfo_Value(new_track, "B_SHOWINTCP", 1)
+        end
+        
+        return new_track
     end
     
     return nil

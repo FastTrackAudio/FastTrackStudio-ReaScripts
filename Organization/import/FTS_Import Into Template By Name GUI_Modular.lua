@@ -74,6 +74,107 @@ if not ok or not json then
     }
 end
 
+-- Load PatternMatching module
+local PatternMatching = dofile(reaper.GetResourcePath() .. "/Scripts/FastTrackStudio Scripts/libraries/utils/Pattern Matching.lua")
+if not PatternMatching then
+    -- Create a basic PatternMatching implementation if loading fails
+    PatternMatching = {
+        MatchesAnyPattern = function(str, patterns)
+            if not str or not patterns then return false, nil end
+            for _, pattern in ipairs(patterns) do
+                if str:match(pattern) then
+                    return true, pattern
+                end
+            end
+            return false, nil
+        end,
+        MatchesNegativePattern = function(str, patterns)
+            if not str or not patterns then return false end
+            for _, pattern in ipairs(patterns) do
+                if str:match(pattern) then
+                    return true
+                end
+            end
+            return false
+        end
+    }
+end
+
+-- Load TrackConfig module
+local TrackConfig = require("track_config")
+if not TrackConfig then
+    -- Create a basic TrackConfig implementation if loading fails
+    TrackConfig = {
+        FindTrackByGUIDWithFallback = function(guid, name)
+            -- Try to find track by GUID first
+            if guid and guid ~= "" then
+                local track = reaper.BR_GetMediaTrackByGUID(0, guid)
+                if track then
+                    return track
+                end
+            end
+            
+            -- If no GUID or not found by GUID, try by name
+            if name and name ~= "" then
+                local track_count = reaper.CountTracks(0)
+                for i = 0, track_count - 1 do
+                    local track = reaper.GetTrack(0, i)
+                    local _, track_name = reaper.GetTrackName(track)
+                    
+                    if track_name == name then
+                        return track
+                    end
+                end
+            end
+            
+            return nil
+        end
+    }
+end
+
+-- Load TrackManagement module
+local TrackManagement = require("track_management")
+if not TrackManagement then
+    -- Create a basic TrackManagement implementation if loading fails
+    TrackManagement = {
+        FindOrCreateTrack = function(track_name, template_track, parent_track, ensure_visible)
+            -- Try to find existing track by name
+            local track_count = reaper.CountTracks(0)
+            for i = 0, track_count - 1 do
+                local track = reaper.GetTrack(0, i)
+                local _, existing_name = reaper.GetTrackName(track)
+                
+                if existing_name == track_name then
+                    return track
+                end
+            end
+            
+            -- If not found, create a new track
+            local new_track = reaper.InsertTrackAtIndex(track_count, true)
+            if new_track then
+                -- Set the track name
+                reaper.GetSetMediaTrackInfo_String(new_track, "P_NAME", track_name, true)
+                
+                -- If parent track is provided, set it as a child
+                if parent_track then
+                    -- Set the track as a child of the parent
+                    reaper.SetMediaTrackInfo_Value(new_track, "P_PARTRACK", parent_track)
+                end
+                
+                -- Ensure track is visible in TCP and mixer
+                if ensure_visible then
+                    reaper.SetMediaTrackInfo_Value(new_track, "B_SHOWINMIXER", 1)
+                    reaper.SetMediaTrackInfo_Value(new_track, "B_SHOWINTCP", 1)
+                end
+                
+                return new_track
+            end
+            
+            return nil
+        end
+    }
+end
+
 -- Add ImGui compatibility for different versions
 if reaper.ImGui_CreateContext then
     -- Check if we can load the official compatibility layer
@@ -464,10 +565,10 @@ function ImportFromFile()
                 
                 for name, config in pairs(track_configs) do
                     if config.patterns and #config.patterns > 0 then
-                        local matches, pattern = MatchesAnyPattern(file_name, config.patterns)
+                        local matches, pattern = PatternMatching.MatchesAnyPattern(file_name, config.patterns)
                         if matches then
                             -- Check negative patterns
-                            local negative_match = MatchesNegativePattern(file_name, config.negative_patterns or {})
+                            local negative_match = PatternMatching.MatchesNegativePattern(file_name, config.negative_patterns or {})
                             if not negative_match then
                                 matched_config = config
                                 matched_name = name
@@ -545,7 +646,7 @@ function ImportFromFile()
                                     if matched_config.rename_takes then
                                         local take = reaper.GetActiveTake(item)
                                         if take then
-                                            local new_name = MatchesAnyPattern(file_name, matched_config.patterns)
+                                            local new_name = PatternMatching.MatchesAnyPattern(file_name, matched_config.patterns)
                                             if new_name then
                                                 reaper.GetSetMediaItemTakeInfo_String(take, "P_NAME", new_name, true)
                                                 ImportScript.LogMessage("Renamed take to: '" .. new_name .. "'", "MOVE")
@@ -687,7 +788,7 @@ function MoveSelectedItems()
 end
 
 -- First, add a helper function to extract pattern categories from item name
-function ExtractPatternCategories(item_name, global_patterns, log_matches)
+function ExtractPatternCategories(item_name, global_patterns, track_configs, matched_group, log_matches)
     local categories = {}
     
     -- Convert item name to lowercase for case-insensitive matching
@@ -758,8 +859,20 @@ function ExtractPatternCategories(item_name, global_patterns, log_matches)
             end
         end
         
-        -- Check for subtype
-        local subtype_patterns = getPatterns(global_patterns.subtype)
+        -- Check for subtype - MODIFIED to use group-specific subtypes if available
+        local subtype_patterns = {}
+        
+        -- If we have a matched group and it has defined subtypes, use those instead of global
+        if matched_group and matched_group.subtypes and #matched_group.subtypes > 0 then
+            subtype_patterns = matched_group.subtypes
+            if log_matches then
+                ImportScript.LogMessage("Using group-specific subtypes for '" .. matched_group.name .. "'", "PATTERN")
+            end
+        else
+            -- Otherwise use global subtypes
+            subtype_patterns = getPatterns(global_patterns.subtype)
+        end
+        
         for _, pattern in ipairs(subtype_patterns) do
             if matchesAsWord(item_name_lower, pattern) then
                 categories.subtype = pattern
@@ -1005,7 +1118,204 @@ function GenerateTrackNameFromCategories(base_name, categories)
     return track_name
 end
 
--- Now, modify the OrganizeSelectedItems function to handle unmatched items and delete empty source tracks
+-- Very simple function to create a track right after the parent track
+function EnsureTrackInFolder(track_name, parent_track)
+    if not track_name or track_name == "" then
+        reaper.ShowConsoleMsg("Error: Cannot create track with empty name\n")
+        return nil
+    end
+    
+    if not parent_track then
+        reaper.ShowConsoleMsg("Error: No parent track provided\n")
+        return nil
+    end
+    
+    -- Store the user's original track selection
+    local original_selected_tracks = {}
+    local selected_track_count = reaper.CountSelectedTracks(0)
+    for i = 0, selected_track_count - 1 do
+        original_selected_tracks[i+1] = reaper.GetSelectedTrack(0, i)
+    end
+    
+    -- Get parent track information
+    local _, parent_name = reaper.GetTrackName(parent_track)
+    reaper.ShowConsoleMsg("Creating track '" .. track_name .. "' after '" .. parent_name .. "'\n")
+    
+    -- Get the parent track's index (0-based) and depth
+    local parent_idx = reaper.GetMediaTrackInfo_Value(parent_track, "IP_TRACKNUMBER") - 1
+    local parent_depth = reaper.GetTrackDepth(parent_track)
+    reaper.ShowConsoleMsg("Parent track index: " .. parent_idx .. ", depth: " .. parent_depth .. "\n")
+    
+    -- Find the end of this folder (last track inside the folder)
+    local track_count = reaper.CountTracks(0)
+    local insert_idx = parent_idx + 1 -- Start right after the parent
+    local end_of_folder_idx = nil
+    local last_folder_item_idx = parent_idx + 1 -- Initialize to first item after parent
+    
+    -- Move through tracks one by one until we find a track at parent_depth or lower
+    -- This ensures we find the exact end of the folder
+    for i = parent_idx + 1, track_count - 1 do
+        local track = reaper.GetTrack(0, i)
+        local current_depth = reaper.GetTrackDepth(track)
+        
+        if current_depth <= parent_depth then
+            -- Found a track at same level or higher than parent - this is the end
+            end_of_folder_idx = i
+            break
+        end
+        
+        -- Still in the folder
+        last_folder_item_idx = i
+        reaper.ShowConsoleMsg("  Track at index " .. i .. " has depth " .. current_depth .. " (still in folder)\n")
+    end
+    
+    -- If we found the end of the folder, we want to insert at the last track inside the folder
+    if end_of_folder_idx then
+        -- We want to insert at the last item inside the folder
+        insert_idx = last_folder_item_idx
+        reaper.ShowConsoleMsg("Found end of folder at index: " .. end_of_folder_idx .. "\n")
+        reaper.ShowConsoleMsg("Will insert at index: " .. insert_idx .. " (at last item in folder)\n")
+    else
+        -- If we didn't find an end, we're at the end of the project
+        insert_idx = track_count
+        reaper.ShowConsoleMsg("No end of folder found, will insert at the end of project\n")
+    end
+    
+    -- Store reference to the original last track before we insert the new one
+    local last_track = nil
+    if insert_idx < track_count then
+        last_track = reaper.GetTrack(0, insert_idx)
+    end
+    
+    -- Create the track at the position of the last track in the folder
+    reaper.InsertTrackAtIndex(insert_idx, false)
+    local new_track = reaper.GetTrack(0, insert_idx)
+    
+    if not new_track then
+        reaper.ShowConsoleMsg("Failed to create track\n")
+        -- Restore original track selection
+        reaper.Main_OnCommand(40297, 0) -- Unselect all tracks
+        for i, track in ipairs(original_selected_tracks) do
+            reaper.SetTrackSelected(track, true)
+        end
+        return nil
+    end
+    
+    -- Set the track name
+    reaper.GetSetMediaTrackInfo_String(new_track, "P_NAME", track_name, true)
+    reaper.ShowConsoleMsg("Set track name: " .. track_name .. "\n")
+    
+    -- Ensure track is visible
+    reaper.SetMediaTrackInfo_Value(new_track, "B_SHOWINMIXER", 1)
+    reaper.SetMediaTrackInfo_Value(new_track, "B_SHOWINTCP", 1)
+    reaper.ShowConsoleMsg("Set track visibility\n")
+    
+    -- If we have a reference to the last track that was pushed down, move it UP
+    -- This puts our new track at the end of the folder
+    if last_track then
+        -- Unselect all tracks
+        reaper.Main_OnCommand(40297, 0) -- Unselect all tracks
+        
+        -- Select the last track that was pushed down
+        reaper.SetTrackSelected(last_track, true)
+        
+        -- Move it UP one position (the ReorderSelectedTracks expects 1-based index)
+        -- We want to move it to the position of our new track
+        reaper.ReorderSelectedTracks(insert_idx, 0)
+        reaper.ShowConsoleMsg("Moved the original last track UP - this puts our new track at the end of the folder\n")
+    end
+    
+    -- Restore original track selection
+    reaper.Main_OnCommand(40297, 0) -- Unselect all tracks
+    for i, track in ipairs(original_selected_tracks) do
+        reaper.SetTrackSelected(track, true)
+    end
+    
+    -- Log success
+    ImportScript.LogMessage("Created track '" .. track_name .. "' in folder '" .. parent_name .. "'", "CREATE")
+    
+    return new_track
+end
+
+-- Update FindBestDestinationTrack to use our new function
+function FindBestDestinationTrack(item_name, categories, config_tracks, group_parent_track, matched_group_name, track_configs)
+    -- First, try to find an exact match in existing tracks
+    local best_track = nil
+    local best_track_info = nil
+    local best_score = 0
+    
+    -- Check existing tracks in this group
+    for _, track_info in ipairs(config_tracks) do
+        local track = track_info.track
+        if track then
+            local _, track_name = reaper.GetTrackName(track)
+            local matches, pattern = PatternMatching.MatchesAnyPattern(item_name, {track_name})
+            if matches then
+                -- Found an exact match
+                best_track = track
+                best_track_info = track_info
+                best_score = 100
+                ImportScript.DebugPrint("  Found exact match with track: '" .. track_name .. "'")
+                ImportScript.LogMessage("Found exact match with track: '" .. track_name .. "'", "MATCH")
+                break
+            end
+        end
+    end
+    
+    -- If no exact match found, create a new track
+    if not best_track then
+        -- Generate track name based on categories
+        local new_track_name = matched_group_name
+        if categories and next(categories) then
+            new_track_name = GenerateTrackNameFromCategories(matched_group_name, categories)
+        end
+        
+        ImportScript.DebugPrint("  No exact match found, will create new track: '" .. new_track_name .. "'")
+        
+        -- Use our new function to ensure proper parent-child relationship
+        local new_track = nil
+        
+        if group_parent_track then
+            local _, parent_name = reaper.GetTrackName(group_parent_track)
+            ImportScript.LogMessage("Creating track '" .. new_track_name .. "' as child of '" .. parent_name .. "'", "CREATE")
+            new_track = EnsureTrackInFolder(new_track_name, group_parent_track)
+        else
+            ImportScript.LogMessage("No parent track found for '" .. matched_group_name .. "'", "WARNING")
+            -- Create track at the end if no parent
+            local track_count = reaper.CountTracks(0)
+            reaper.InsertTrackAtIndex(track_count, true)
+            new_track = reaper.GetTrack(0, track_count)
+            if new_track then
+                reaper.GetSetMediaTrackInfo_String(new_track, "P_NAME", new_track_name, true)
+            end
+        end
+        
+        if new_track then
+            ImportScript.DebugPrint("  Successfully created new track: '" .. new_track_name .. "'")
+            ImportScript.LogMessage("Created new track: '" .. new_track_name .. "' within group: '" .. matched_group_name .. "'", "CREATE")
+            
+            best_track = new_track
+            best_track_info = {
+                track = new_track,
+                name = new_track_name,
+                items = {}
+            }
+            
+            return best_track, best_track_info, 100 -- Return high score for newly created track
+        else
+            ImportScript.DebugPrint("  ✗ Failed to create new track")
+            ImportScript.LogMessage("Failed to create new track within group: '" .. matched_group_name .. "'", "ERROR")
+            return nil, nil, 0
+        end
+    else
+        return best_track, best_track_info, best_score
+    end
+    
+    -- If all else fails, return nil
+    return nil, nil, 0
+end
+
+-- Now, modify the OrganizeSelectedItems function to properly handle destination tracks
 function ImportScript.OrganizeSelectedItems()
     -- Prevent UI refresh during organization
     reaper.PreventUIRefresh(1)
@@ -1045,16 +1355,19 @@ function ImportScript.OrganizeSelectedItems()
     local PatternMatching = dofile(reaper.GetResourcePath() .. "/Scripts/FastTrackStudio Scripts/libraries/utils/Pattern Matching.lua")
     local TrackConfig = require("track_config")
     
-    -- First, classify all items by their matching configurations
-    local classified_items = {}
+    -- Load global patterns for track renaming
+    local DefaultPatterns = require("default_patterns")
+    local ext_state_name = "FastTrackStudio_ImportByName"
+    local global_patterns = DefaultPatterns.LoadGlobalPatterns(ext_state_name, ImportScript)
+    
+    -- PHASE 1: Collect all possible matches for each item
+    ImportScript.DebugPrint("\n--- PHASE 1: COLLECTING ALL POSSIBLE MATCHES ---")
+    ImportScript.LogMessage("Phase 1: Collecting all possible matches", "ORGANIZE")
+    
     local all_items = {}
-    local unmatched_item_list = {} -- List to store unmatched items
-    local items_organized = 0
-    local items_skipped = 0
-    local unmatched_items = 0
     local source_tracks = {} -- Keep track of source tracks to check for emptiness later
     
-    -- Store items by their matched configuration
+    -- Store items with their possible matches
     for i = 0, item_count - 1 do
         local item = reaper.GetSelectedMediaItem(0, i)
         local take = reaper.GetActiveTake(item)
@@ -1070,18 +1383,13 @@ function ImportScript.OrganizeSelectedItems()
                 source_tracks[tostring(source_track)] = source_track
             end
             
-            ImportScript.DebugPrint("\nClassifying item: '" .. take_name .. "'")
-            ImportScript.DebugPrint("  Item details:")
-            ImportScript.DebugPrint("    - Name (lowercase): '" .. take_name:lower() .. "'")
-            ImportScript.DebugPrint("    - Start: " .. item_start .. ", End: " .. item_end)
+            ImportScript.DebugPrint("\nCollecting matches for item: '" .. take_name .. "'")
             
-            -- Find a matching track configuration
-            local matched_config = nil
-            local matched_name = nil
-            local matched_pattern = nil
+            -- Find all possible matching track configurations
+            local possible_matches = {}
             
             for name, config in pairs(track_configs) do
-                ImportScript.DebugPrint("    Checking config: " .. name)
+                ImportScript.DebugPrint("  Checking config: " .. name)
                 
                 if config.patterns and #config.patterns > 0 then
                     local matches, pattern = PatternMatching.MatchesAnyPattern(take_name, config.patterns)
@@ -1089,88 +1397,141 @@ function ImportScript.OrganizeSelectedItems()
                         -- Check negative patterns
                         local negative_match = PatternMatching.MatchesNegativePattern(take_name, config.negative_patterns or {})
                         if not negative_match then
-                            matched_config = config
-                            matched_name = name
-                            matched_pattern = pattern
-                            ImportScript.DebugPrint("      ✓ MATCHED with config: '" .. name .. "', pattern: '" .. pattern .. "'")
+                            -- Calculate match score based on specificity
+                            local match_score = 0
+                            
+                            -- Base score for matching the group
+                            match_score = match_score + 10
+                            
+                            -- Additional score for matching specific track patterns
+                            if config.track_patterns and #config.track_patterns > 0 then
+                                local track_matches, track_pattern = PatternMatching.MatchesAnyPattern(take_name, config.track_patterns)
+                                if track_matches then
+                                    match_score = match_score + 20
+                                end
+                            end
+                            
+                            -- Add to possible matches
+                            table.insert(possible_matches, {
+                                name = name,
+                                config = config,
+                                pattern = pattern,
+                                score = match_score
+                            })
+                            
+                            ImportScript.DebugPrint("    ✓ MATCHED with config: '" .. name .. "', pattern: '" .. pattern .. "', score: " .. match_score)
                             ImportScript.LogMessage("Item '" .. take_name .. "' matched config: '" .. name .. "' with pattern: '" .. pattern .. "'", "MATCH")
-                            break
                         end
                     end
                 end
             end
             
-            if matched_config then
-                -- Add to classified items
-                if not classified_items[matched_name] then
-                    classified_items[matched_name] = {
-                        config = matched_config,
-                        items = {}
-                    }
-                end
-                
-                table.insert(classified_items[matched_name].items, {
-                    item = item,
-                    take = take,
-                    name = take_name,
-                    start = item_start,
-                    end_time = item_end,
-                    pattern = matched_pattern
-                })
-                
-                table.insert(all_items, {
-                    item = item,
-                    take = take,
-                    name = take_name,
-                    config_name = matched_name,
-                    config = matched_config,
-                    start = item_start,
-                    end_time = item_end,
-                    pattern = matched_pattern
-                })
+            -- Sort matches by score (highest first)
+            table.sort(possible_matches, function(a, b) return a.score > b.score end)
+            
+            -- Extract pattern categories from item name
+            -- Now pass the best matched group to ExtractPatternCategories if we have matches
+            local matched_group = nil
+            if #possible_matches > 0 then
+                -- Use the highest scored match's config
+                matched_group = possible_matches[1].config
+            end
+            
+            -- Extract categories with the matched group
+            local categories = ExtractPatternCategories(take_name, global_patterns, track_configs, matched_group, true)
+            
+            -- Add to all items with their matches
+            table.insert(all_items, {
+                item = item,
+                take = take,
+                name = take_name,
+                start = item_start,
+                end_time = item_end,
+                categories = categories,
+                matches = possible_matches
+            })
+            
+            if #possible_matches > 0 then
+                ImportScript.DebugPrint("  Found " .. #possible_matches .. " possible matches")
             else
-                ImportScript.DebugPrint("    ✗ No matching configuration found")
+                ImportScript.DebugPrint("  ✗ No matching configuration found")
                 ImportScript.LogMessage("Item '" .. take_name .. "' has no matching configuration", "UNMATCH")
-                items_skipped = items_skipped + 1
-                unmatched_items = unmatched_items + 1
-                
-                -- Add to unmatched items list
-                table.insert(unmatched_item_list, {
-                    item = item,
-                    take = take,
-                    name = take_name,
-                    start = item_start,
-                    end_time = item_end
-                })
             end
         else
             ImportScript.DebugPrint("  ✗ SKIPPED: Item has no take")
             ImportScript.LogMessage("Skipped an item without a take", "SKIP")
-            items_skipped = items_skipped + 1
         end
     end
     
-    -- Sort all items by start time (for consistent processing)
-    table.sort(all_items, function(a, b) return a.start < b.start end)
+    -- PHASE 2: Find all existing destination tracks for each group
+    ImportScript.DebugPrint("\n--- PHASE 2: FINDING EXISTING DESTINATION TRACKS ---")
+    ImportScript.LogMessage("Phase 2: Finding existing destination tracks", "ORGANIZE")
     
-    -- For each group of items by configuration, process them
-    local created_tracks = {} -- Track destination tracks we've created
+    -- Map to store destination tracks for each group
+    local group_destination_tracks = {}
     
-    -- Load global patterns for track renaming
-    local DefaultPatterns = require("default_patterns")
-    local ext_state_name = "FastTrackStudio_ImportByName" -- Define the ext_state_name
-    local global_patterns = DefaultPatterns.LoadGlobalPatterns(ext_state_name, ImportScript)
+    -- For each group, find all existing destination tracks
+    for group_name, group_config in pairs(track_configs) do
+        -- Get parent track
+        local parent_track = TrackConfig.FindTrackByGUIDWithFallback(
+            group_config.parent_track_guid, 
+            group_config.parent_track
+        )
+        
+        if parent_track then
+            -- Find all tracks that are children of this parent
+            local destination_tracks = {}
+            local track_count = reaper.CountTracks(0)
+            
+            for i = 0, track_count - 1 do
+                local track = reaper.GetTrack(0, i)
+                local parent = reaper.GetParentTrack(track)
+                
+                if parent == parent_track then
+                    local _, track_name = reaper.GetTrackName(track)
+                    table.insert(destination_tracks, {
+                        track = track,
+                        name = track_name
+                    })
+                    end
+                end
+                
+            -- Store the destination tracks for this group
+            group_destination_tracks[group_name] = {
+                parent_track = parent_track,
+                destination_tracks = destination_tracks
+            }
+            
+            ImportScript.DebugPrint("  Group '" .. group_name .. "' has " .. #destination_tracks .. " destination tracks")
+        end
+    end
     
-    ImportScript.DebugPrint("\n--- ORGANIZING ITEMS ---")
-    ImportScript.LogMessage("Processing " .. #all_items .. " matched items", "ORGANIZE")
+    -- PHASE 3: Create all necessary tracks first
+    ImportScript.DebugPrint("\n--- PHASE 3: CREATING TRACKS ---")
+    ImportScript.LogMessage("Phase 3: Creating necessary tracks", "ORGANIZE")
     
+    -- Track created tracks and their items
+    local created_tracks = {}
+    local items_organized = 0
+    local items_skipped = 0
+    local unmatched_items = 0
+    local track_creation_failed_items = 0
+    
+    -- First, create all necessary tracks
     for _, item_data in ipairs(all_items) do
-        ImportScript.DebugPrint("Processing item: '" .. item_data.name .. "' with config: " .. item_data.config_name)
+        -- Skip items with no matches
+        if #item_data.matches == 0 then
+            unmatched_items = unmatched_items + 1
+            goto continue_phase3
+        end
+        
+        -- Get the best match (highest score)
+        local best_match = item_data.matches[1]
         
         -- Get parent track
         local parent_track = TrackConfig.FindTrackByGUIDWithFallback(
-            item_data.config.parent_track_guid, 
-            item_data.config.parent_track
+            best_match.config.parent_track_guid, 
+            best_match.config.parent_track
         )
         
         if parent_track then
@@ -1179,248 +1540,97 @@ function ImportScript.OrganizeSelectedItems()
             ImportScript.LogMessage("Using parent track: '" .. parent_name .. "'", "TRACK")
         else
             ImportScript.DebugPrint("  No parent track found")
-            ImportScript.LogMessage("No parent track found for config: '" .. item_data.config_name .. "'", "TRACK")
+            ImportScript.LogMessage("No parent track found for config: '" .. best_match.name .. "'", "TRACK")
         end
         
         -- Determine destination track name (base name)
-        local base_track_name = item_data.config.destination_track or item_data.config_name
-        ImportScript.DebugPrint("  Base destination track name: '" .. base_track_name .. "'")
+        local base_track_name = best_match.config.destination_track or best_match.name
         
-        -- Extract pattern categories from item name for possible track renaming
-        local categories = {}
-        -- Always extract categories for item name generation, regardless of rename_track setting
-        categories = ExtractPatternCategories(item_data.name, global_patterns, true)
-        ImportScript.DebugPrint("  Extracted categories for item name generation: " .. ImportScript.GetTableSize(categories))
+        -- Get config tracks for this configuration
+        local config_tracks = created_tracks[best_match.name] or {}
         
-        -- Check if we already have tracks for this configuration
-        local config_tracks = created_tracks[item_data.config_name] or {}
-        local destination_track = nil
-        local track_idx = 0
+        -- Find the best destination track for this item
+        local destination_track, best_track_info, match_score = FindBestDestinationTrack(
+            item_data.name, 
+            item_data.categories, 
+            config_tracks, 
+            parent_track, 
+            base_track_name,
+            track_configs
+        )
         
-        -- Check if the item can go into an existing track (no overlap, exact name match)
-        local can_use_existing = false
-        local best_track = nil
-        
-        ImportScript.DebugPrint("  Checking " .. #config_tracks .. " existing tracks for this configuration")
-        
-        -- First, check tracks we've already created during this organization
-        if #config_tracks > 0 then
-            for idx, track_info in ipairs(config_tracks) do
-                -- Check if any item on this track has the exact same name
-                local exact_name_match = false
-                for _, track_item in ipairs(track_info.items) do
-                    if track_item.name == item_data.name then
-                        exact_name_match = true
-                        ImportScript.DebugPrint("    Found exact name match on track " .. idx)
-                        break
-                    end
-                end
-                
-                -- If we have an exact name match, check for overlap
-                if exact_name_match then
-                    local overlaps = false
-                    for _, track_item in ipairs(track_info.items) do
-                        -- Check if items overlap
-                        if (item_data.start < track_item.end_time and item_data.end_time > track_item.start) then
-                            overlaps = true
-                            ImportScript.DebugPrint("    Item overlaps with existing item on track " .. idx)
-                            ImportScript.LogMessage("Item '" .. item_data.name .. "' overlaps with existing item on track '" .. track_info.name .. "'", "OVERLAP")
-                            break
-                        end
-                    end
-                    
-                    if not overlaps then
-                        can_use_existing = true
-                        best_track = track_info
-                        track_idx = idx
-                        ImportScript.DebugPrint("    ✓ Can use existing track " .. idx .. " (exact name match, no overlap)")
-                        ImportScript.LogMessage("Using existing track '" .. track_info.name .. "' for item '" .. item_data.name .. "'", "TRACK")
-                        break
-                    else
-                        ImportScript.DebugPrint("    ✗ Cannot use track " .. idx .. " due to overlap")
-                    end
-                else
-                    ImportScript.DebugPrint("    ✗ No exact name match on track " .. idx)
-                end
+        -- If we found a destination track
+        if destination_track then
+            ImportScript.DebugPrint("  Found destination track with score: " .. match_score)
+            
+            -- If this is a new track we haven't tracked yet, add it to our list
+            if best_track_info and not best_track_info.tracked then
+                best_track_info.tracked = true
+                table.insert(config_tracks, best_track_info)
+                created_tracks[best_match.name] = config_tracks
             end
+            
+            -- Store the destination track info with the item data for later use
+            item_data.destination_track = destination_track
+            item_data.best_track_info = best_track_info
         else
-            ImportScript.DebugPrint("  No existing tracks created during this organization for this configuration")
+            ImportScript.DebugPrint("  ✗ No destination track available")
+            ImportScript.LogMessage("Failed to find or create destination track for '" .. item_data.name .. "'", "ERROR")
+            items_skipped = items_skipped + 1
+            track_creation_failed_items = track_creation_failed_items + 1
         end
         
-        -- If we couldn't find a matching track we created, check for an existing destination track in the project
-        if not can_use_existing then
-            -- First, check if a track with the exact base name exists
-            local possible_track_name = base_track_name
-            
-            -- Check if global rename is enabled or track-specific rename is enabled
-            local configs = ImportScript.LoadConfigs and ImportScript.LoadConfigs() or {}
-            local global_rename_enabled = configs.global_rename_track
-            local should_rename = global_rename_enabled or item_data.config.rename_track
-            
-            -- If rename is enabled, add categories
-            if should_rename and next(categories) then
-                possible_track_name = GenerateTrackNameFromCategories(base_track_name, categories)
-                ImportScript.DebugPrint("  Generated track name with categories: '" .. possible_track_name .. "'")
-            end
-            
-            local track_count = reaper.CountTracks(0)
-            for i = 0, track_count - 1 do
-                local track = reaper.GetTrack(0, i)
-                local _, track_name = reaper.GetTrackName(track)
-                
-                -- If track name matches our possible destination
-                if track_name == possible_track_name then
-                    ImportScript.DebugPrint("  Found existing project track: '" .. track_name .. "'")
-                    
-                    -- Check for overlaps with existing items on this track
-                    local overlaps = false
-                    local item_count = reaper.GetTrackNumMediaItems(track)
-                    
-                    for j = 0, item_count - 1 do
-                        local existing_item = reaper.GetTrackMediaItem(track, j)
-                        local existing_item_start = reaper.GetMediaItemInfo_Value(existing_item, "D_POSITION")
-                        local existing_item_end = existing_item_start + reaper.GetMediaItemInfo_Value(existing_item, "D_LENGTH")
-                        
-                        -- Check if items overlap
-                        if (item_data.start < existing_item_end and item_data.end_time > existing_item_start) then
-                            overlaps = true
-                            ImportScript.DebugPrint("    Item overlaps with existing project item on track")
-                            ImportScript.LogMessage("Item '" .. item_data.name .. "' overlaps with existing project item on track '" .. track_name .. "'", "OVERLAP")
-                            break
-                        end
-                    end
-                    
-                    if not overlaps then
-                        can_use_existing = true
-                        destination_track = track
-                        ImportScript.DebugPrint("    ✓ Can use existing project track (no overlap)")
-                        ImportScript.LogMessage("Using existing project track '" .. track_name .. "' for item '" .. item_data.name .. "'", "TRACK")
-                        
-                        -- Create a track_info structure for this project track
-                        best_track = {
-                            track = track,
-                            name = track_name,
-                            items = {} -- Start with no items listed
-                        }
-                        
-                        -- Add to our tracked list
-                        table.insert(config_tracks, best_track)
-                        created_tracks[item_data.config_name] = config_tracks
-                        break
-                    else
-                        ImportScript.DebugPrint("    ✗ Cannot use existing project track due to overlap")
-                    end
-                end
-            end
+        ::continue_phase3::
+    end
+    
+    -- PHASE 4: Move items to their destination tracks
+    ImportScript.DebugPrint("\n--- PHASE 4: MOVING ITEMS ---")
+    ImportScript.LogMessage("Phase 4: Moving items to destination tracks", "ORGANIZE")
+    
+    -- Now move all items to their destination tracks
+    for _, item_data in ipairs(all_items) do
+        -- Skip items with no matches or no destination track
+        if #item_data.matches == 0 or not item_data.destination_track then
+            ImportScript.DebugPrint("  Skipping item without destination track: '" .. item_data.name .. "'")
+            goto continue_phase4
         end
         
-        -- If we can't use an existing track, create a new one with incremented name
-        if not can_use_existing then
-            ImportScript.DebugPrint("  Need to create a new track for this item")
-            
-            -- Determine the track increment
-            local increment_start = item_data.config.increment_start or 1
-            track_idx = #config_tracks + 1
-            
-            -- Build the track name
-            local track_name = base_track_name
-            
-            -- Only add number if needed
-            local should_number = true
-            if item_data.config.only_number_when_multiple and track_idx == 1 then
-                should_number = false
-            end
-            
-            if should_number then
-                track_name = track_name .. " " .. (increment_start + track_idx - 1)
-            end
-            
-            -- If rename_track is enabled, add categories
-            if item_data.config.rename_track and next(categories) then
-                track_name = GenerateTrackNameFromCategories(track_name, categories)
-                ImportScript.DebugPrint("  Generated track name with categories: '" .. track_name .. "'")
-            end
-            
-            ImportScript.DebugPrint("  Creating new track: '" .. track_name .. "'")
-            local numbering_msg = ""
-            if should_number then
-                numbering_msg = " (with numbering)"
-            end
-            ImportScript.LogMessage("Creating new track: '" .. track_name .. "'" .. numbering_msg, "CREATE")
-            
-            -- Create the track
-            destination_track = TrackManagement.FindOrCreateTrack(track_name, nil, parent_track, true)
-            
-            if destination_track then
-                local track_idx = reaper.GetMediaTrackInfo_Value(destination_track, "IP_TRACKNUMBER")
-                ImportScript.DebugPrint("    ✓ Created new track: '" .. track_name .. "'")
-                ImportScript.LogMessage("Successfully created track '" .. track_name .. "' at position " .. track_idx, "CREATE")
-                
-                -- Add to our list of created tracks
-                table.insert(config_tracks, {
-                    track = destination_track,
-                    name = track_name,
-                    items = {}
-                })
-                
-                created_tracks[item_data.config_name] = config_tracks
-                best_track = config_tracks[#config_tracks]
-            else
-                ImportScript.DebugPrint("    ✗ Failed to create track: TrackManagement.FindOrCreateTrack returned nil")
-                ImportScript.LogMessage("Failed to create track for '" .. item_data.name .. "'", "ERROR")
-                items_skipped = items_skipped + 1
-                goto continue
-            end
-        else
-            destination_track = best_track.track
-            
-            -- Always try to rename the track with pattern categories, regardless of rename_track setting
-            -- Extract categories if we haven't already done so
-            if not next(categories) then
-                categories = ExtractPatternCategories(item_data.name, global_patterns, true)
-                ImportScript.DebugPrint("  Re-extracting categories for track renaming: " .. ImportScript.GetTableSize(categories))
-            end
-            
-            -- If we have pattern categories, generate a full name for the track
-            if next(categories) then
-                local generated_name = GenerateTrackNameFromCategories(base_track_name, categories)
-                if generated_name ~= best_track.name then
-                    ImportScript.DebugPrint("  Renaming existing track from '" .. best_track.name .. "' to '" .. generated_name .. "'")
-                    reaper.GetSetMediaTrackInfo_String(destination_track, "P_NAME", generated_name, true)
-                    best_track.name = generated_name
-                    ImportScript.LogMessage("Renamed track to '" .. generated_name .. "'", "TRACK")
-                end
-            end
-            
-            ImportScript.DebugPrint("  Using existing track: '" .. best_track.name .. "'")
-        end
+        -- Get the best match (highest score)
+        local best_match = item_data.matches[1]
+        
+        -- Determine destination track name (base name)
+        local base_track_name = best_match.config.destination_track or best_match.name
         
         -- Move the item to the destination track
-        if destination_track then
-            ImportScript.DebugPrint("  Moving item to track")
-            reaper.MoveMediaItemToTrack(item_data.item, destination_track)
+        ImportScript.DebugPrint("  Moving item '" .. item_data.name .. "' to track: '" .. item_data.best_track_info.name .. "'")
+        
+        -- Get current track the item is on
+        local current_track = reaper.GetMediaItemTrack(item_data.item)
+        local _, current_track_name = reaper.GetTrackName(current_track)
+        ImportScript.DebugPrint("  Item is currently on track: '" .. current_track_name .. "'")
+        
+        -- Get destination track info
+        local _, dest_track_name = reaper.GetTrackName(item_data.destination_track)
+        ImportScript.DebugPrint("  Destination track is: '" .. dest_track_name .. "'")
+        
+        -- Directly move the item
+        if reaper.MoveMediaItemToTrack(item_data.item, item_data.destination_track) then
+            ImportScript.DebugPrint("  ✓ Successfully moved item to track")
             
             -- Add this item to the track's item list
-            table.insert(best_track.items, {
+            table.insert(item_data.best_track_info.items, {
                 name = item_data.name,
                 start = item_data.start,
                 end_time = item_data.end_time
             })
             
             -- Generate the full pattern-based name for the item
-            local item_name_to_use = best_track.name
-            
-            -- Always try to generate a full pattern-based name, regardless of rename_track setting
-            -- Extract categories if we haven't already
-            if not next(categories) then
-                categories = ExtractPatternCategories(item_data.name, global_patterns, true)
-                ImportScript.DebugPrint("  Re-extracting categories for item renaming: " .. ImportScript.GetTableSize(categories))
-            end
+            local item_name_to_use = item_data.best_track_info.name
             
             -- If we have pattern categories, generate a full name
-            if next(categories) then
-                local generated_name = GenerateTrackNameFromCategories(base_track_name, categories)
-                ImportScript.LogMessage("Generated full name: '" .. generated_name .. "' (track name: '" .. best_track.name .. "')", "RENAME")
+            if next(item_data.categories) then
+                local generated_name = GenerateTrackNameFromCategories(base_track_name, item_data.categories)
+                ImportScript.LogMessage("Generated full name: '" .. generated_name .. "' (track name: '" .. item_data.best_track_info.name .. "')", "RENAME")
                 item_name_to_use = generated_name
             end
             
@@ -1432,21 +1642,21 @@ function ImportScript.OrganizeSelectedItems()
             end
             
             items_organized = items_organized + 1
-            ImportScript.LogMessage("Moved item '" .. item_data.name .. "' to track '" .. best_track.name .. "'", "MOVE")
+            ImportScript.LogMessage("Moved item '" .. item_data.name .. "' to track '" .. item_data.best_track_info.name .. "'", "MOVE")
         else
-            ImportScript.DebugPrint("  ✗ No destination track available (destination_track is nil)")
-            ImportScript.LogMessage("Failed to move item '" .. item_data.name .. "' - no destination track", "ERROR")
+            ImportScript.DebugPrint("  ✗ Failed to move item to track")
+            ImportScript.LogMessage("Failed to move item '" .. item_data.name .. "' to track '" .. item_data.best_track_info.name .. "'", "ERROR")
             items_skipped = items_skipped + 1
         end
         
-        ::continue::
+        ::continue_phase4::
     end
     
-    -- Handle unmatched items - move them to NOT SORTED folder
+    -- Handle unmatched items and items with track creation failures - move them to NOT SORTED folder
     local not_sorted_count = 0
-    if #unmatched_item_list > 0 then
-        ImportScript.DebugPrint("\n--- HANDLING UNMATCHED ITEMS ---")
-        ImportScript.LogMessage("Processing " .. #unmatched_item_list .. " unmatched items", "ORGANIZE")
+    if unmatched_items > 0 or track_creation_failed_items > 0 then
+        ImportScript.DebugPrint("\n--- HANDLING UNMATCHED ITEMS AND TRACK CREATION FAILURES ---")
+        ImportScript.LogMessage("Processing " .. (unmatched_items + track_creation_failed_items) .. " items to move to NOT SORTED", "ORGANIZE")
         
         -- Find or create NOT SORTED folder
         local not_sorted_track = nil
@@ -1487,13 +1697,15 @@ function ImportScript.OrganizeSelectedItems()
             end
         end
         
-        -- Move unmatched items to NOT SORTED folder
+        -- Move unmatched items and items with track creation failures to NOT SORTED folder
         if not_sorted_track then
-            for _, item_data in ipairs(unmatched_item_list) do
-                ImportScript.DebugPrint("  Moving unmatched item: '" .. item_data.name .. "' to NOT SORTED folder")
+            for _, item_data in ipairs(all_items) do
+                if #item_data.matches == 0 or not item_data.destination_track then
+                    ImportScript.DebugPrint("  Moving item to NOT SORTED folder: '" .. item_data.name .. "'")
                 reaper.MoveMediaItemToTrack(item_data.item, not_sorted_track)
                 not_sorted_count = not_sorted_count + 1
-                ImportScript.LogMessage("Moved unmatched item '" .. item_data.name .. "' to NOT SORTED folder", "MOVE")
+                    ImportScript.LogMessage("Moved item '" .. item_data.name .. "' to NOT SORTED folder", "MOVE")
+                end
             end
         end
     end
@@ -1693,12 +1905,25 @@ function ImportScript.AnalyzeSelectedItems()
     reaper.ShowConsoleMsg("Track configs: " .. (next(track_configs) and table.concat(GetTableKeys(track_configs), ", ") or "None") .. "\n")
     reaper.ShowConsoleMsg("Global patterns available: " .. (global_patterns and "Yes" or "No") .. "\n")
     
-    -- Log available patterns
-    ImportScript.LogMessage("Available pattern categories:", "PATTERN")
+    -- Log available global patterns
+    ImportScript.LogMessage("Available global pattern categories:", "PATTERN")
     for category, patterns in pairs(global_patterns) do
         if patterns.patterns and #patterns.patterns > 0 then
             ImportScript.LogMessage("  - " .. category .. ": " .. table.concat(patterns.patterns, ", "), "PATTERN")
         end
+    end
+    
+    -- Log groups with custom subtypes
+    ImportScript.LogMessage("Groups with custom subtypes:", "PATTERN")
+    local has_custom_subtypes = false
+    for name, config in pairs(track_configs) do
+        if config.subtypes and #config.subtypes > 0 then
+            has_custom_subtypes = true
+            ImportScript.LogMessage("  - " .. name .. ": " .. table.concat(config.subtypes, ", "), "PATTERN")
+        end
+    end
+    if not has_custom_subtypes then
+        ImportScript.LogMessage("  - None found (will use global subtypes instead)", "PATTERN")
     end
     
     -- Analyze each selected item
@@ -1748,6 +1973,14 @@ function ImportScript.AnalyzeSelectedItems()
                         ImportScript.LogMessage("    → Parent folder: " .. match.config.parent_track, "ANALYZE")
                     end
                     
+                    -- Show custom subtypes if available
+                    if match.config.subtypes and #match.config.subtypes > 0 then
+                        ImportScript.LogMessage("    → Group-specific subtypes: " .. table.concat(match.config.subtypes, ", "), "ANALYZE")
+                        ImportScript.LogMessage("      (These subtypes will override global subtypes for this group)", "ANALYZE")
+                    else
+                        ImportScript.LogMessage("    → No group-specific subtypes (will use global subtypes)", "ANALYZE")
+                    end
+                    
                     -- Show rename track setting
                     local configs = ImportScript.LoadConfigs()
                     local rename_state = "No"
@@ -1763,7 +1996,12 @@ function ImportScript.AnalyzeSelectedItems()
             end
             
             -- Extract and log pattern categories
-            local categories = ExtractPatternCategories(take_name, global_patterns, true)
+            -- Use the best matched group for extracting categories
+            local matched_group = nil
+            if #matched_configs > 0 then
+                matched_group = matched_configs[1].config
+            end
+            local categories = ExtractPatternCategories(take_name, global_patterns, track_configs, matched_group, true)
             
             -- Log each category type
             ImportScript.LogMessage("Pattern Categories:", "ANALYZE")
@@ -1789,6 +2027,11 @@ function ImportScript.AnalyzeSelectedItems()
                 
                 if categories[key] then
                     ImportScript.LogMessage("  - " .. display_name .. ": " .. categories[key], "ANALYZE")
+                    
+                    -- Add special note for subtypes
+                    if key == "subtype" and matched_group and matched_group.subtypes and #matched_group.subtypes > 0 then
+                        ImportScript.LogMessage("    (Using " .. matched_group.name .. "-specific subtype)", "ANALYZE")
+                    end
                 else
                     ImportScript.LogMessage("  - " .. display_name .. ": None", "ANALYZE")
                 end
@@ -1815,6 +2058,163 @@ function ImportScript.AnalyzeSelectedItems()
     
     -- Set status message
     ImportScript.LastMessage = "Analysis complete for " .. item_count .. " items. See Logs tab for details."
+    ImportScript.LastMessageTime = os.time()
+end
+
+-- Function to generate a random name for testing pattern matching
+function ImportScript.TestRandomNameGeneration(random_order)
+    -- Check if any items are selected
+    local item_count = reaper.CountSelectedMediaItems(0)
+    if item_count == 0 then
+        reaper.ShowMessageBox("No items selected. Please select items to test.", "No Items Selected", 0)
+        ImportScript.LogMessage("Test failed: No items selected", "ERROR")
+        return
+    end
+    
+    -- Load required modules
+    local DefaultPatterns = require("default_patterns")
+    local ext_state_name = "FastTrackStudio_ImportByName"
+    local global_patterns = DefaultPatterns.LoadGlobalPatterns(ext_state_name, ImportScript)
+    
+    -- Set a random seed based on current time to ensure different results each time
+    math.randomseed(os.time())
+    
+    -- Start undo block
+    reaper.Undo_BeginBlock()
+    
+    -- Load track configs
+    local track_configs = ImportScript.LoadTrackConfigs()
+    
+    -- Process each selected item
+    for i = 0, item_count - 1 do
+        local item = reaper.GetSelectedMediaItem(0, i)
+        local take = reaper.GetActiveTake(item)
+        
+        if take then
+            local _, take_name = reaper.GetSetMediaItemTakeInfo_String(take, "P_NAME", "", false)
+            
+            -- Create a new categories table with randomly selected patterns
+            local categories = {}
+            
+            -- Helper function to get random pattern from a category
+            local function getRandomPattern(category)
+                if not category or not category.patterns then return nil end
+                local patterns = category.patterns
+                if #patterns == 0 then return nil end
+                return patterns[math.random(1, #patterns)]
+            end
+            
+            -- Define the order of categories
+            local category_order = {
+                {key = "prefix", name = "Prefix"},
+                {key = "tracking", name = "Tracking Info"},
+                {key = "subtype", name = "SubType"},
+                {key = "arrangement", name = "Arrangement"},
+                {key = "performer", name = "Performer"},
+                {key = "section", name = "Section"},
+                {key = "layers", name = "Layers"},
+                {key = "mic", name = "Mic"},
+                {key = "playlist", name = "Playlist"},
+                {key = "type", name = "Type"}
+            }
+            
+            -- If random order is requested, shuffle the category order
+            if random_order then
+                for i = #category_order, 2, -1 do
+                    local j = math.random(1, i)
+                    category_order[i], category_order[j] = category_order[j], category_order[i]
+                end
+            end
+            
+            -- First, select a random group
+            local group_names = {}
+            for name, _ in pairs(track_configs) do
+                table.insert(group_names, name)
+            end
+            
+            if #group_names == 0 then
+                ImportScript.LogMessage("No track configuration groups found", "ERROR")
+                return
+            end
+            
+            local random_group_name = group_names[math.random(1, #group_names)]
+            local random_group = track_configs[random_group_name]
+            
+            -- Get the parent group prefix if this is a subgroup
+            local parent_prefix = ""
+            if random_group.parent_group then
+                -- Find the parent group
+                for name, group in pairs(track_configs) do
+                    if name == random_group.parent_group then
+                        parent_prefix = group.prefix or ""
+                        ImportScript.LogMessage("Using parent group prefix: " .. parent_prefix, "TEST")
+                        break
+                    end
+                end
+            end
+            
+            -- Combine parent prefix with group name (not just prefix) if this is a subgroup
+            local final_prefix = parent_prefix
+            if random_group.parent_group then
+                -- Use the full group name instead of just the prefix
+                if parent_prefix ~= "" then
+                    final_prefix = parent_prefix .. " " .. random_group.name
+                else
+                    final_prefix = random_group.name
+                end
+                ImportScript.LogMessage("Using parent prefix with full group name: " .. final_prefix, "TEST")
+            elseif random_group.prefix then
+                -- If not a subgroup, just use the group's prefix
+                final_prefix = random_group.prefix
+                ImportScript.LogMessage("Using group prefix: " .. final_prefix, "TEST")
+            end
+            
+            -- Set the prefix in the categories table
+            categories.prefix = final_prefix
+            ImportScript.LogMessage("Using final prefix: " .. final_prefix, "TEST")
+            
+            -- Generate random patterns for other categories
+            for _, cat in ipairs(category_order) do
+                -- Skip prefix as we've already handled it
+                if cat.key ~= "prefix" then
+                    -- Special handling for subtype - use group-specific subtypes if available
+                    if cat.key == "subtype" and random_group.subtypes and #random_group.subtypes > 0 then
+                        -- Use group-specific subtypes
+                        local subtypes = random_group.subtypes
+                        -- 70% chance to include subtype
+                        if math.random() > 0.3 and #subtypes > 0 then
+                            categories.subtype = subtypes[math.random(1, #subtypes)]
+                            ImportScript.LogMessage("Added group-specific subtype: " .. categories.subtype, "TEST")
+                        end
+                    else
+                        -- Use global patterns for other categories
+                        local pattern = getRandomPattern(global_patterns[cat.key])
+                        if pattern then
+                            -- 70% chance to include each subcategory
+                            if math.random() > 0.3 then
+                                categories[cat.key] = pattern
+                                ImportScript.LogMessage("Added random " .. cat.name .. " pattern: " .. pattern, "TEST")
+                            end
+                        end
+                    end
+                end
+            end
+            
+            -- Generate the full name using the existing function
+            -- Use an empty string as the base name to start fresh
+            local generated_name = GenerateTrackNameFromCategories("", categories)
+            
+            -- Rename the take with the completely new name
+            reaper.GetSetMediaItemTakeInfo_String(take, "P_NAME", generated_name, true)
+            ImportScript.LogMessage("Generated test name: " .. generated_name, "TEST")
+        end
+    end
+    
+    -- End undo block
+    reaper.Undo_EndBlock("Generate random test names", -1)
+    
+    -- Set status message
+    ImportScript.LastMessage = "Generated random test names for " .. item_count .. " items"
     ImportScript.LastMessageTime = os.time()
 end
 
@@ -1851,5 +2251,6 @@ return {
     ClearLogs = ImportScript.ClearLogs,
     GetLogs = ImportScript.GetLogs,
     LogMessages = ImportScript.LogMessages,
-    AnalyzeSelectedItems = ImportScript.AnalyzeSelectedItems
+    AnalyzeSelectedItems = ImportScript.AnalyzeSelectedItems,
+    TestRandomNameGeneration = ImportScript.TestRandomNameGeneration
 } 

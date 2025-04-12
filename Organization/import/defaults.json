@@ -1,10 +1,19 @@
 {
   "default_patterns": {
     "performer": ["Cody"],
-    "subtype": ["Clean"],
-    "arrangement": [
+    "subtype": [
       "Lead",
-      "Rhyth",
+      "Clean",
+      "Drive",
+      "Pad",
+      "Crunch",
+      "Big",
+      "Amb",
+      "Arp",
+      "Chord"
+    ],
+    "arrangement": [
+      "Rhythm",
       "Solo",
       "Amb",
       "Big",
@@ -13,40 +22,17 @@
       "Drive",
       "Pad"
     ],
-    "section": [
-      "A",
-      "B",
-      "C",
-      "Break",
-      "Fill",
-      "Solo",
-      "Verse",
-      "Chorus",
-      "Bridge",
-      "Intro",
-      "Outro",
-      "Pre",
-      "Post"
-    ],
-    "type": ["BUS", "SUM", "MIDI", "SAMPLE", "WAV", "AUDIO", "VSTi"],
-    "layers": ["Double", "Layer", "Octave", "Fifth", "Harmony", "L", "R"],
+    "section": ["Intro", "Verse", "Chorus", "Bridge", "Instrumental", "Outro"],
+    "type": ["BUS", "SUM", "MIDI"],
+    "layers": ["DBL", "OCT", "1", "2", "3", "4", "5"],
     "playlist": [".1", ".2", ".3", ".4", ".5"],
-    "tracking": ["Take", "Comp", "Alt", "V1", "V2", "Version"],
-    "mic": [
-      "SM57",
-      "U87",
-      "MD421",
-      "D112",
-      "Room",
-      "OH",
-      "Close",
-      "Far",
-      "Spot"
-    ]
+    "tracking": ["PASS 1", "PASS 2", "PASS 3", "PASS 4"],
+    "mic": ["Top", "Bottom", "In", "Out", "DI", "Amp"]
   },
   "default_groups": [
     {
       "name": "Reference",
+      "prefix": "REF",
       "patterns": ["print", "master", "smart tempo multitrack"],
       "parent_track": "REF TRACK",
       "destination_track": "REF TRACK",
@@ -56,6 +42,7 @@
     },
     {
       "name": "Synth",
+      "prefix": "SY",
       "patterns": ["synth", "nord", "casio", "fa06", "charang", "briteness"],
       "parent_track": "SYNTHS",
       "destination_track": "SY",
@@ -65,7 +52,20 @@
       "only_number_when_multiple": true
     },
     {
+      "name": "Drums",
+      "prefix": "D",
+      "patterns": ["drum", "drums", "kit"],
+      "parent_track": "DRUMS",
+      "destination_track": "DRUMS",
+      "insert_mode": "increment",
+      "increment_start": 1,
+      "create_if_missing": true,
+      "only_number_when_multiple": true
+    },
+    {
       "name": "HiHat",
+      "prefix": "HH",
+      "parent_group": "Drums",
       "patterns": ["hi hat", "hihat", "hi%-hat", "hh", "hat"],
       "parent_track": "CYMBALS BUS",
       "destination_track": "HiHat",
@@ -75,6 +75,7 @@
     },
     {
       "name": "BGV",
+      "prefix": "BGV",
       "patterns": [
         "bgv",
         "backing vocal",
@@ -93,6 +94,7 @@
     },
     {
       "name": "Guitar",
+      "prefix": "GTR",
       "patterns": ["guitar", "gtr"],
       "parent_track": "GTR ELEC",
       "destination_track": "GTR E",
@@ -102,6 +104,7 @@
     },
     {
       "name": "Keys",
+      "prefix": "K",
       "patterns": ["keys", "piano", "pno", "nord", "rhodes", "wurli"],
       "parent_track": "KEYS",
       "destination_track": "Keys",
@@ -114,6 +117,7 @@
     },
     {
       "name": "Percussion",
+      "prefix": "PERC",
       "patterns": ["perc"],
       "parent_track": "PERC",
       "destination_track": "PERC",
@@ -123,6 +127,8 @@
     },
     {
       "name": "Room",
+      "prefix": "RM",
+      "parent_group": "Drums",
       "patterns": ["room", "rooms", "rm", "crotch", "mono u47", "mono"],
       "parent_track": "ROOM BUS",
       "destination_track": "Rooms",
@@ -143,6 +149,8 @@
     },
     {
       "name": "Overheads",
+      "prefix": "OH",
+      "parent_group": "Drums",
       "patterns": ["oh", "overhead", "oh hat", "oh ride"],
       "parent_track": "CYMBALS BUS",
       "destination_track": "OH",
@@ -153,6 +161,8 @@
     },
     {
       "name": "Toms",
+      "prefix": "TOM",
+      "parent_group": "Drums",
       "patterns": ["tom", "rack", "floor"],
       "parent_track": "TOMS",
       "destination_track": "Tom",
@@ -164,50 +174,64 @@
     },
     {
       "name": "Kick",
+      "prefix": "K",
+      "parent_group": "Drums",
       "patterns": ["kick", "kik"],
-      "parent_track": "KICK SUM",
+      "parent_track": "D KICK (Sum)",
       "destination_track": "Kick",
       "insert_mode": "increment",
       "increment_start": 1,
       "negative_patterns": ["kickler"],
-      "only_number_when_multiple": true
+      "only_number_when_multiple": true,
+      "subtypes": ["In", "Out", "Sub", "Trig", "Beater", "No Bleed"]
     },
     {
       "name": "Snare",
+      "prefix": "S",
+      "parent_group": "Drums",
       "patterns": ["snare", "snr"],
       "parent_track": "SNARE SUM",
       "destination_track": "Snare",
       "insert_mode": "increment",
       "increment_start": 1,
-      "only_number_when_multiple": true
+      "only_number_when_multiple": true,
+      "subtypes": ["Top", "Bottom", "Side"]
     },
     {
       "name": "Bass",
+      "prefix": "B",
       "patterns": ["bass"],
       "parent_track": "BASS",
       "destination_track": "Bass",
       "insert_mode": "existing",
-      "only_number_when_multiple": true
+      "only_number_when_multiple": true,
+      "subtypes": ["DI", "Amp", "Comp", "Mix"]
     },
     {
       "name": "LeadVocal",
+      "prefix": "V",
       "patterns": ["vocal", "vox", "lead vox"],
       "parent_track": "VOCALS",
       "destination_track": "V LEAD",
       "insert_mode": "existing",
       "negative_patterns": ["eko", "plate", "magic", "h3000", "bgv"],
-      "only_number_when_multiple": true
+      "only_number_when_multiple": true,
+      "subtypes": ["Main", "Double", "Ad Lib", "Alt"]
     },
     {
       "name": "VocalEffects",
+      "prefix": "VFX",
+      "parent_group": "LeadVocal",
       "patterns": ["h3000", "eko", "plate", "magic"],
       "parent_track": "Vox FX",
       "destination_track": "V Room",
       "insert_mode": "existing",
-      "only_number_when_multiple": true
+      "only_number_when_multiple": true,
+      "subtypes": ["Delay", "Reverb", "Chorus", "Special"]
     },
     {
       "name": "PrintedFX",
+      "prefix": "FX",
       "patterns": [
         "h3000",
         "hall",
@@ -225,15 +249,18 @@
       "insert_mode": "increment",
       "increment_start": 1,
       "is_printed_fx": true,
-      "only_number_when_multiple": true
+      "only_number_when_multiple": true,
+      "subtypes": ["Delay", "Reverb", "Modulation", "Special"]
     },
     {
       "name": "Ride",
-      "patterns": ["ride"],
+      "prefix": "RIDE",
+      "parent_group": "Drums",
+      "patterns": ["ride", "rd"],
       "parent_track": "CYMBALS BUS",
-      "destination_track": "Ride",
+      "destination_track": "RD",
       "insert_mode": "increment",
-      "negative_patterns": ["oh", "overhead"],
+      "increment_start": 1,
       "only_number_when_multiple": true
     }
   ]

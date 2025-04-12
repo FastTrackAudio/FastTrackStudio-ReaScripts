@@ -206,28 +206,34 @@ end
 -- This is important because GUIDs are project-specific, so each project can have different GUIDs
 -- even when using the same configuration and track names
 function TrackConfig.FindTrackByGUIDWithFallback(guid, name)
-    -- First try to find by GUID if available
+    -- Try to find track by GUID first
     if guid and guid ~= "" then
         local track = reaper.BR_GetMediaTrackByGUID(0, guid)
         if track then
+            local _, track_name = reaper.GetTrackName(track)
+            -- Debug output
+            reaper.ShowConsoleMsg("Found track by GUID: " .. guid .. " - Name: " .. track_name .. "\n")
             return track
         end
     end
     
-    -- Fall back to name if GUID doesn't exist or couldn't be found
+    -- If no GUID or not found by GUID, try by name
     if name and name ~= "" then
-        -- Convert to lowercase for case-insensitive matching
-        local lower_name = name:lower()
-        for i = 0, reaper.CountTracks(0) - 1 do
+        local track_count = reaper.CountTracks(0)
+        for i = 0, track_count - 1 do
             local track = reaper.GetTrack(0, i)
             local _, track_name = reaper.GetTrackName(track)
-            -- Case-insensitive comparison
-            if track_name:lower() == lower_name then
+            
+            if track_name == name then
+                -- Debug output
+                reaper.ShowConsoleMsg("Found track by name: " .. name .. "\n")
                 return track
             end
         end
     end
     
+    -- Debug output if not found
+    reaper.ShowConsoleMsg("Track not found - GUID: " .. (guid or "nil") .. ", Name: " .. (name or "nil") .. "\n")
     return nil
 end
 
