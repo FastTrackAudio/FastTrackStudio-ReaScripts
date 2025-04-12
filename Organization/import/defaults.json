@@ -31,16 +31,6 @@
   },
   "default_groups": [
     {
-      "name": "Reference",
-      "prefix": "REF",
-      "patterns": ["print", "master", "smart tempo multitrack"],
-      "parent_track": "REF TRACK",
-      "destination_track": "REF TRACK",
-      "insert_mode": "increment",
-      "increment_start": 1,
-      "only_number_when_multiple": true
-    },
-    {
       "name": "Synth",
       "prefix": "SY",
       "patterns": ["synth", "nord", "casio", "fa06", "charang", "briteness"],
@@ -54,7 +44,7 @@
     {
       "name": "Drums",
       "prefix": "D",
-      "patterns": ["drum", "drums", "kit"],
+      "patterns": ["kit"],
       "parent_track": "DRUMS",
       "destination_track": "DRUMS",
       "insert_mode": "increment",
@@ -63,15 +53,24 @@
       "only_number_when_multiple": true
     },
     {
-      "name": "HiHat",
+      "name": "Hi-Hat",
       "prefix": "HH",
       "parent_group": "Drums",
-      "patterns": ["hi hat", "hihat", "hi%-hat", "hh", "hat"],
-      "parent_track": "CYMBALS BUS",
-      "destination_track": "HiHat",
+      "patterns": ["hi hat", "hihat", "hi%-hat", "hh", "hat", "hi-hat"],
+      "parent_track": "D CYMBALS (BUS)",
+      "destination_track": "D Hi-Hat",
       "insert_mode": "increment",
       "negative_patterns": ["oh", "overhead"],
-      "only_number_when_multiple": true
+      "only_number_when_multiple": true,
+      "track_name_variations": [
+        "hi hat",
+        "hihat",
+        "hi-hat",
+        "d hi hat",
+        "d hihat",
+        "d hi-hat"
+      ],
+      "stereo_pair_mode": false
     },
     {
       "name": "BGV",
@@ -149,28 +148,66 @@
     },
     {
       "name": "Overheads",
-      "prefix": "OH",
+      "prefix": "",
       "parent_group": "Drums",
       "patterns": ["oh", "overhead", "oh hat", "oh ride"],
-      "parent_track": "CYMBALS BUS",
-      "destination_track": "OH",
+      "parent_track": "D CYMBALS (BUS)",
+      "destination_track": "D OHs",
       "insert_mode": "increment",
       "increment_start": 1,
       "priority": 2,
-      "only_number_when_multiple": true
+      "only_number_when_multiple": true,
+      "track_name_variations": [
+        "oh",
+        "ohs",
+        "overheads",
+        "overhead",
+        "d oh",
+        "d ohs",
+        "d overheads",
+        "d overhead"
+      ],
+      "stereo_pair_mode": true,
+      "stereo_pair_patterns": {
+        "left": ["l", "left"],
+        "right": ["r", "right"],
+        "hat": ["hat", "hihat", "hi hat", "hi-hat"],
+        "ride": ["ride", "crash", "cymbal"]
+      }
     },
     {
       "name": "Toms",
-      "prefix": "TOM",
+      "prefix": "",
       "parent_group": "Drums",
-      "patterns": ["tom", "rack", "floor"],
-      "parent_track": "TOMS",
+      "patterns": ["tom"],
+      "parent_track": "D TOM (BUS)",
       "destination_track": "Tom",
       "insert_mode": "increment",
       "increment_start": 1,
       "create_if_missing": true,
       "negative_patterns": ["bottom", "smart tempo"],
-      "only_number_when_multiple": true
+      "only_number_when_multiple": true,
+      "force_separate_subtype_tracks": true,
+      "subtypes": ["1", "2", "3", "4", "5", "6"],
+      "subtype_parent_overrides": {
+        "6": "D TOMS (BUS)"
+      },
+      "default_override_track": "Top",
+      "subtype_patterns": {
+        "1": ["high"],
+        "2": ["mid"],
+        "3": ["floor"],
+        "4": ["low"],
+        "5": ["tom 5", "extra", "tom extra", "extra tom"],
+        "6": [
+          "tom 6",
+          "verb",
+          "tom verb",
+          "verb tom",
+          "reverb tom",
+          "tom reverb"
+        ]
+      }
     },
     {
       "name": "Kick",
@@ -183,19 +220,39 @@
       "increment_start": 1,
       "negative_patterns": ["kickler"],
       "only_number_when_multiple": true,
-      "subtypes": ["In", "Out", "Sub", "Trig", "Beater", "No Bleed"]
+      "subtypes": ["In", "Out", "Sub", "Trig", "Beater", "No Bleed"],
+      "subtype_parent_overrides": {
+        "Sub": "D KICK (BUS)"
+      },
+      "default_override_track": "In",
+      "subtype_patterns": {
+        "In": ["in", "inside", "inner", "kick in"],
+        "Out": ["out", "outside", "kick out"],
+        "Sub": ["sub", "low", "808", "bass"],
+        "Trig": ["trig", "trigger", "click", "beater"]
+      }
     },
     {
       "name": "Snare",
       "prefix": "S",
       "parent_group": "Drums",
       "patterns": ["snare", "snr"],
-      "parent_track": "SNARE SUM",
+      "parent_track": "D SNARE (Sum)",
       "destination_track": "Snare",
       "insert_mode": "increment",
       "increment_start": 1,
       "only_number_when_multiple": true,
-      "subtypes": ["Top", "Bottom", "Side"]
+      "subtypes": ["Top", "Bottom", "alt", "Verb"],
+      "subtype_parent_overrides": {
+        "Verb": "D SNARE (BUS)"
+      },
+      "default_override_track": "Top",
+      "subtype_patterns": {
+        "Top": ["top", "upper", "above", "over"],
+        "Bottom": ["bottom", "under", "below", "lower", "beneath", "batter"],
+        "alt": ["alt", "alternative", "option", "piccolo", "second", "2nd"],
+        "Verb": ["verb", "reverb", "room", "hall", "plate", "echo"]
+      }
     },
     {
       "name": "Bass",
@@ -205,63 +262,18 @@
       "destination_track": "Bass",
       "insert_mode": "existing",
       "only_number_when_multiple": true,
-      "subtypes": ["DI", "Amp", "Comp", "Mix"]
-    },
-    {
-      "name": "LeadVocal",
-      "prefix": "V",
-      "patterns": ["vocal", "vox", "lead vox"],
-      "parent_track": "VOCALS",
-      "destination_track": "V LEAD",
-      "insert_mode": "existing",
-      "negative_patterns": ["eko", "plate", "magic", "h3000", "bgv"],
-      "only_number_when_multiple": true,
-      "subtypes": ["Main", "Double", "Ad Lib", "Alt"]
-    },
-    {
-      "name": "VocalEffects",
-      "prefix": "VFX",
-      "parent_group": "LeadVocal",
-      "patterns": ["h3000", "eko", "plate", "magic"],
-      "parent_track": "Vox FX",
-      "destination_track": "V Room",
-      "insert_mode": "existing",
-      "only_number_when_multiple": true,
-      "subtypes": ["Delay", "Reverb", "Chorus", "Special"]
-    },
-    {
-      "name": "PrintedFX",
-      "prefix": "FX",
-      "patterns": [
-        "h3000",
-        "hall",
-        "plate",
-        "verb",
-        "eko",
-        "magic",
-        "fx",
-        "effect",
-        "delay",
-        "reverb"
-      ],
-      "parent_track": "PRINTED FX",
-      "destination_track": "FX",
-      "insert_mode": "increment",
-      "increment_start": 1,
-      "is_printed_fx": true,
-      "only_number_when_multiple": true,
-      "subtypes": ["Delay", "Reverb", "Modulation", "Special"]
-    },
-    {
-      "name": "Ride",
-      "prefix": "RIDE",
-      "parent_group": "Drums",
-      "patterns": ["ride", "rd"],
-      "parent_track": "CYMBALS BUS",
-      "destination_track": "RD",
-      "insert_mode": "increment",
-      "increment_start": 1,
-      "only_number_when_multiple": true
+      "subtypes": ["DI", "Amp", "Comp", "Mix"],
+      "subtype_parent_overrides": {
+        "DI": "BASS DI",
+        "Amp": "BASS AMP"
+      },
+      "default_override_track": "DI",
+      "subtype_patterns": {
+        "DI": ["di", "direct", "direct in", "clean", "direct input"],
+        "Amp": ["amp", "amplifier", "distortion", "fuzz", "drive", "mic"],
+        "Comp": ["comp", "parallel", "compressed", "distressed", "destroy"],
+        "Mix": ["mix", "mixed", "blend", "fx", "effect"]
+      }
     }
   ]
 }

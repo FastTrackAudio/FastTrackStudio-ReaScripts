@@ -1243,76 +1243,690 @@ function FindBestDestinationTrack(item_name, categories, config_tracks, group_pa
     local best_track = nil
     local best_track_info = nil
     local best_score = 0
+    local should_use_lanes = false
+    local should_duplicate_track = false
+    local override_track = nil
+    local subtype_parent_override = nil -- Will store parent track override for subtype
     
-    -- Check existing tracks in this group
+    -- Debug the match attempt
+    ImportScript.DebugPrint("Looking for match for item '" .. item_name .. "', searching " .. #config_tracks .. " existing tracks")
+    
+    -- Get the available subtypes for this group, if any
+    local subtypes = {}
+    local matched_config = nil
+    for name, config in pairs(track_configs) do
+        if name == matched_group_name then
+            matched_config = config
+            if config.subtypes and #config.subtypes > 0 then
+                subtypes = config.subtypes
+                ImportScript.DebugPrint("  Found subtypes for group '" .. matched_group_name .. "': " .. table.concat(subtypes, ", "))
+            end
+            
+            -- Check if this config has an override track for items without subtypes
+            if config.default_override_track then
+                override_track = config.default_override_track
+                ImportScript.DebugPrint("  Found override track: '" .. override_track .. "' for items without subtypes")
+            end
+            break
+        end
+    end
+    
+    -- Detect which subtype(s) the item name contains
+    local detected_subtypes = {}
+    local item_name_lower = item_name:lower()
+    
+    -- Check for our new subtype tags in the format [GROUP-SUBTYPE]
+    local tagged_group, tagged_subtype = item_name_lower:match("%[([%w]+)%-([%w%s]+)%]")
+    if tagged_group and tagged_subtype then
+        ImportScript.DebugPrint("  Found tagged subtype: '" .. tagged_subtype .. "' for group: '" .. tagged_group .. "'")
+        table.insert(detected_subtypes, tagged_subtype)
+        
+        -- If this is from the same group as our matched config, check for parent override
+        if matched_config then
+            local config_name_lower = matched_config.name and matched_config.name:lower() or ""
+            if tagged_group:lower() == config_name_lower and
+               matched_config.subtype_parent_overrides and 
+               matched_config.subtype_parent_overrides[tagged_subtype] then
+                subtype_parent_override = matched_config.subtype_parent_overrides[tagged_subtype]
+                ImportScript.DebugPrint("  ✓ Found parent track override for tagged subtype '" .. tagged_subtype .. "': " .. subtype_parent_override)
+                ImportScript.LogMessage("Using parent override '" .. subtype_parent_override .. "' for tagged subtype '" .. tagged_subtype .. "'", "OVERRIDE")
+                
+                -- Try to find the override parent track
+                local override_parent = TrackConfig.FindTrackByGUIDWithFallback(nil, subtype_parent_override)
+                if override_parent then
+                    local _, override_parent_name = reaper.GetTrackName(override_parent)
+                    ImportScript.DebugPrint("  ✓ Found override parent track: '" .. override_parent_name .. "' for subtype '" .. tagged_subtype .. "'")
+                    
+                    -- Override the group_parent_track with this one
+                    group_parent_track = override_parent
+                    ImportScript.LogMessage("Using override parent '" .. override_parent_name .. "' for item '" .. item_name .. "'", "PARENT")
+                end
+            else
+                -- Try case-insensitive matching for subtype_parent_overrides
+                ImportScript.DebugPrint("  Checking case-insensitive subtype parent overrides")
+                if matched_config and matched_config.subtype_parent_overrides then
+                    for subtype, override in pairs(matched_config.subtype_parent_overrides) do
+                        if tagged_subtype:lower() == subtype:lower() then
+                            subtype_parent_override = override
+                            ImportScript.DebugPrint("  ✓ Found parent track override for tagged subtype '" .. tagged_subtype .. "' (case-insensitive): " .. subtype_parent_override)
+                            ImportScript.LogMessage("Using parent override '" .. subtype_parent_override .. "' for tagged subtype '" .. tagged_subtype .. "' (case-insensitive)", "OVERRIDE")
+                            
+                            -- Try to find the override parent track
+                            local override_parent = TrackConfig.FindTrackByGUIDWithFallback(nil, subtype_parent_override)
+                            if override_parent then
+                                local _, override_parent_name = reaper.GetTrackName(override_parent)
+                                ImportScript.DebugPrint("  ✓ Found override parent track: '" .. override_parent_name .. "' for subtype '" .. tagged_subtype .. "'")
+                                
+                                -- Override the group_parent_track with this one
+                                group_parent_track = override_parent
+                                ImportScript.LogMessage("Using override parent '" .. override_parent_name .. "' for item '" .. item_name .. "'", "PARENT")
+                            end
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    else
+        -- If no tagged subtype, fall back to custom subtype patterns if available
+        if matched_config and matched_config.subtypes and #matched_config.subtypes > 0 and matched_config.subtype_patterns then
+            ImportScript.DebugPrint("  Checking item against subtype patterns")
+            
+            -- Try to match against custom subtype patterns
+            for _, subtype in ipairs(matched_config.subtypes) do
+                if matched_config.subtype_patterns[subtype] then
+                    local subtype_patterns = matched_config.subtype_patterns[subtype]
+                    
+                    for _, pattern in ipairs(subtype_patterns) do
+                        if item_name_lower:match(pattern:lower()) then
+                            table.insert(detected_subtypes, subtype)
+                            ImportScript.DebugPrint("  ✓ Detected subtype '" .. subtype .. "' via pattern '" .. pattern .. "' in item name")
+                            ImportScript.LogMessage("Detected subtype '" .. subtype .. "' using pattern '" .. pattern .. "' in item '" .. item_name .. "'", "PATTERN")
+                            
+                            -- Check if this subtype has a parent track override
+                            if matched_config.subtype_parent_overrides and matched_config.subtype_parent_overrides[subtype] then
+                                subtype_parent_override = matched_config.subtype_parent_overrides[subtype]
+                                ImportScript.DebugPrint("  ✓ Found parent track override for subtype '" .. subtype .. "': " .. subtype_parent_override)
+                                ImportScript.LogMessage("Using parent override '" .. subtype_parent_override .. "' for subtype '" .. subtype .. "'", "OVERRIDE")
+                                
+                                -- Try to find the override parent track
+                                local override_parent = TrackConfig.FindTrackByGUIDWithFallback(nil, subtype_parent_override)
+                                if override_parent then
+                                    local _, override_parent_name = reaper.GetTrackName(override_parent)
+                                    ImportScript.DebugPrint("  ✓ Found override parent track: '" .. override_parent_name .. "' for subtype '" .. tagged_subtype .. "'")
+                                    
+                                    -- Override the group_parent_track with this one
+                                    group_parent_track = override_parent
+                                    ImportScript.LogMessage("Using override parent '" .. override_parent_name .. "' for item '" .. item_name .. "'", "PARENT")
+                                end
+                            end
+                            
+                            break
+                        end
+                    end
+                    
+                    if #detected_subtypes > 0 then break end
+                end
+            end
+        end
+        
+        -- If still no subtype found, fall back to direct subtype matching
+        if #detected_subtypes == 0 then
+            for _, subtype in ipairs(subtypes) do
+                if item_name_lower:find(subtype:lower(), 1, true) then
+                    table.insert(detected_subtypes, subtype)
+                    ImportScript.DebugPrint("  Detected subtype '" .. subtype .. "' in item name via direct match")
+                    
+                    -- Check if this subtype has a parent track override
+                    if matched_config and matched_config.subtype_parent_overrides and 
+                       matched_config.subtype_parent_overrides[subtype] then
+                        subtype_parent_override = matched_config.subtype_parent_overrides[subtype]
+                        ImportScript.DebugPrint("  Found parent track override for subtype '" .. subtype .. "': " .. subtype_parent_override)
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Check for playlist markers in the item name (.1, .2, .3, etc.)
+    local playlist_number = nil
+    local playlist_pattern = item_name_lower:match("%.(%d+)")
+    if playlist_pattern then
+        playlist_number = tonumber(playlist_pattern)
+        ImportScript.DebugPrint("  Detected playlist number: " .. playlist_number)
+    end
+    
+    -- Extract the base name (without playlist number) for comparisons
+    local item_base_name = item_name_lower
+    if playlist_number then
+        item_base_name = item_name_lower:gsub("%." .. playlist_number, "")
+        ImportScript.DebugPrint("  Item base name (without playlist): '" .. item_base_name .. "'")
+    end
+    
+    -- Function to determine if two item names are the same except for playlist numbers
+    local function areSameNameExceptPlaylist(name1, name2)
+        -- Convert to lowercase for comparison
+        local n1 = name1:lower()
+        local n2 = name2:lower()
+        
+        -- Remove playlist numbers if present
+        local n1_base = n1:gsub("%.%d+", "")
+        local n2_base = n2:gsub("%.%d+", "")
+        
+        -- Return true if the base names match
+        return n1_base == n2_base
+    end
+    
+    -- Build a comprehensive list of tracks to check
+    local all_tracks_to_check = {}
+    
+    -- First add tracks from config_tracks (tracks we're already tracking in this operation)
     for _, track_info in ipairs(config_tracks) do
-        local track = track_info.track
-        if track then
+        if track_info.track then
+            table.insert(all_tracks_to_check, {
+                track = track_info.track,
+                info = track_info
+            })
+        end
+    end
+    
+    -- Then add all child tracks under the parent folder if we have a parent
+    if group_parent_track then
+        local _, parent_name = reaper.GetTrackName(group_parent_track)
+        ImportScript.DebugPrint("  Searching for child tracks under parent: '" .. parent_name .. "'")
+        
+        local num_tracks = reaper.CountTracks(0)
+        for i = 0, num_tracks - 1 do
+            local track = reaper.GetTrack(0, i)
+            local parent = reaper.GetParentTrack(track)
+            
+            -- If this track is a child of our parent track
+            if parent == group_parent_track then
+                -- Check if we've already added this track from config_tracks
+                local already_added = false
+                for _, track_info in ipairs(config_tracks) do
+                    if track_info.track == track then
+                        already_added = true
+                        break
+                    end
+                end
+                
+                if not already_added then
+                    local _, track_name = reaper.GetTrackName(track)
+                    ImportScript.DebugPrint("  Adding child track: '" .. track_name .. "' from parent: '" .. parent_name .. "'")
+                    table.insert(all_tracks_to_check, {
+                        track = track,
+                        info = {
+                            track = track,
+                            name = track_name,
+                            items = {}
+                        }
+                    })
+                end
+            end
+        end
+    end
+    
+    -- ADDITION: If we have a subtype with parent override, also check all tracks under that parent
+    if subtype_parent_override and #detected_subtypes > 0 then
+        ImportScript.DebugPrint("  Scanning for tracks under parent override: '" .. subtype_parent_override .. "'")
+        
+        -- Find the parent override track
+        local override_parent_track = nil
+        local num_tracks = reaper.CountTracks(0)
+        for i = 0, num_tracks - 1 do
+            local track = reaper.GetTrack(0, i)
             local _, track_name = reaper.GetTrackName(track)
-            local matches, pattern = PatternMatching.MatchesAnyPattern(item_name, {track_name})
-            if matches then
-                -- Found an exact match
-                best_track = track
-                best_track_info = track_info
-                best_score = 100
-                ImportScript.DebugPrint("  Found exact match with track: '" .. track_name .. "'")
-                ImportScript.LogMessage("Found exact match with track: '" .. track_name .. "'", "MATCH")
+            
+            if track_name == subtype_parent_override then
+                override_parent_track = track
+                ImportScript.DebugPrint("  Found override parent track: '" .. track_name .. "'")
                 break
             end
         end
-    end
-    
-    -- If no exact match found, create a new track
-    if not best_track then
-        -- Generate track name based on categories
-        local new_track_name = matched_group_name
-        if categories and next(categories) then
-            new_track_name = GenerateTrackNameFromCategories(matched_group_name, categories)
-        end
         
-        ImportScript.DebugPrint("  No exact match found, will create new track: '" .. new_track_name .. "'")
-        
-        -- Use our new function to ensure proper parent-child relationship
-        local new_track = nil
-        
-        if group_parent_track then
-            local _, parent_name = reaper.GetTrackName(group_parent_track)
-            ImportScript.LogMessage("Creating track '" .. new_track_name .. "' as child of '" .. parent_name .. "'", "CREATE")
-            new_track = EnsureTrackInFolder(new_track_name, group_parent_track)
-        else
-            ImportScript.LogMessage("No parent track found for '" .. matched_group_name .. "'", "WARNING")
-            -- Create track at the end if no parent
-            local track_count = reaper.CountTracks(0)
-            reaper.InsertTrackAtIndex(track_count, true)
-            new_track = reaper.GetTrack(0, track_count)
-            if new_track then
-                reaper.GetSetMediaTrackInfo_String(new_track, "P_NAME", new_track_name, true)
+        -- If not found by name, try using the TrackConfig helper
+        if not override_parent_track then
+            override_parent_track = TrackConfig.FindTrackByGUIDWithFallback(nil, subtype_parent_override)
+            if override_parent_track then
+                local _, track_name = reaper.GetTrackName(override_parent_track)
+                ImportScript.DebugPrint("  Found override parent track via TrackConfig: '" .. track_name .. "'")
+            else
+                -- Auto-create the override parent if it doesn't exist
+                ImportScript.DebugPrint("  Attempting to auto-create missing override parent: '" .. subtype_parent_override .. "'")
+                ImportScript.LogMessage("Auto-creating override parent: '" .. subtype_parent_override .. "'", "CREATE")
+                
+                -- Create the parent at the root level
+                reaper.InsertTrackAtIndex(reaper.CountTracks(0), true)
+                override_parent_track = reaper.GetTrack(0, reaper.CountTracks(0) - 1)
+                
+                if override_parent_track then
+                    -- Set the track name
+                    reaper.GetSetMediaTrackInfo_String(override_parent_track, "P_NAME", subtype_parent_override, true)
+                    
+                    -- Make it a folder
+                    reaper.SetMediaTrackInfo_Value(override_parent_track, "I_FOLDERDEPTH", 1)
+                    
+                    ImportScript.DebugPrint("  ✓ Successfully created override parent track: '" .. subtype_parent_override .. "'")
+                    ImportScript.LogMessage("Successfully created override parent: '" .. subtype_parent_override .. "'", "CREATE")
+                else
+                    ImportScript.DebugPrint("  ✗ Failed to create override parent track")
+                    ImportScript.LogMessage("Failed to create override parent: '" .. subtype_parent_override .. "'", "ERROR")
+                end
             end
         end
         
-        if new_track then
-            ImportScript.DebugPrint("  Successfully created new track: '" .. new_track_name .. "'")
-            ImportScript.LogMessage("Created new track: '" .. new_track_name .. "' within group: '" .. matched_group_name .. "'", "CREATE")
-            
-            best_track = new_track
-            best_track_info = {
-                track = new_track,
-                name = new_track_name,
-                items = {}
-            }
-            
-            return best_track, best_track_info, 100 -- Return high score for newly created track
-        else
-            ImportScript.DebugPrint("  ✗ Failed to create new track")
-            ImportScript.LogMessage("Failed to create new track within group: '" .. matched_group_name .. "'", "ERROR")
-            return nil, nil, 0
+        -- If we found the override parent, add all its children
+        if override_parent_track then
+            for i = 0, num_tracks - 1 do
+                local track = reaper.GetTrack(0, i)
+                local parent = reaper.GetParentTrack(track)
+                
+                -- If this track is a child of the override parent track
+                if parent == override_parent_track then
+                    -- Check if we've already added this track
+                    local already_added = false
+                    for _, track_data in ipairs(all_tracks_to_check) do
+                        if track_data.track == track then
+                            already_added = true
+                            break
+                        end
+                    end
+                    
+                    if not already_added then
+                        local _, track_name = reaper.GetTrackName(track)
+                        ImportScript.DebugPrint("  Adding child track from override parent: '" .. track_name .. "'")
+                        table.insert(all_tracks_to_check, {
+                            track = track,
+                            info = {
+                                track = track,
+                                name = track_name,
+                                items = {}
+                            }
+                        })
+                    end
+                end
+            end
         end
-    else
-        return best_track, best_track_info, best_score
     end
     
-    -- If all else fails, return nil
-    return nil, nil, 0
+    -- Check all tracks for the best match
+    for _, track_data in ipairs(all_tracks_to_check) do
+        local track = track_data.track
+        local track_info = track_data.info
+        
+        if track then
+            local _, track_name = reaper.GetTrackName(track)
+            local track_name_lower = track_name:lower()
+            ImportScript.DebugPrint("  Comparing with track: '" .. track_name .. "'")
+            
+            -- PRIORITY 1: Check for exact subtype match
+            if #detected_subtypes > 0 then
+                for _, subtype in ipairs(detected_subtypes) do
+                    -- When checking for subtypes, we want to be very precise 
+                    ImportScript.DebugPrint("  Checking if track '" .. track_name .. "' contains subtype '" .. subtype .. "'")
+                    
+                    -- More precise subtype matching to avoid false matches
+                    local subtype_match = false
+                    
+                    -- 1. Check if the track name ends with the exact subtype (with space before)
+                    if track_name_lower:match("%s" .. subtype:lower() .. "$") then
+                        subtype_match = true
+                        ImportScript.DebugPrint("  ✓ Track name ends with subtype")
+                    -- 2. Check if track name contains the subtype as a whole word
+                    elseif track_name_lower:match("%s" .. subtype:lower() .. "%s") then
+                        subtype_match = true
+                        ImportScript.DebugPrint("  ✓ Track name contains subtype as whole word")
+                    -- 3. Direct match for single-word track names
+                    elseif track_name_lower == subtype:lower() then
+                        subtype_match = true
+                        ImportScript.DebugPrint("  ✓ Track name exactly matches subtype")
+                    end
+                    
+                    if subtype_match then
+                        -- Found a subtype match - this is highest priority
+                        
+                        -- Check for playlist difference (if both have playlist numbers)
+                        local track_playlist = track_name_lower:match("%.(%d+)")
+                        if playlist_number and track_playlist then
+                            local track_playlist_num = tonumber(track_playlist)
+                            
+                            -- If playlists are different but everything else matches,
+                            -- we should use take lanes
+                            if track_playlist_num ~= playlist_number and areSameNameExceptPlaylist(track_name, item_name) then
+                                ImportScript.DebugPrint("  Different playlist numbers: track=" .. track_playlist_num .. 
+                                                      ", item=" .. playlist_number .. ", will use take lanes")
+                best_track = track
+                best_track_info = track_info
+                best_score = 100
+                                should_use_lanes = true
+                                ImportScript.LogMessage("Found playlist variation with track: '" .. track_name .. 
+                                                     "', will use take lanes", "MATCH")
+                                goto return_best_track
+                            end
+                        end
+                        
+                        -- This is a generic approach for all track types with subtypes
+                        -- Check if this track is for the specific subtype we're looking for
+                        -- Generate track variations to try
+                        local base_track_name = ""
+                        if matched_config and matched_config.destination_track then
+                            base_track_name = matched_config.destination_track
+                        else
+                            base_track_name = matched_group_name
+                        end
+                        
+                        -- Build possible variations of the track name with the subtype
+                        local target_variations = {
+                            (base_track_name .. " " .. subtype):lower(),
+                            base_track_name:lower() .. subtype:lower(),
+                            ("d " .. base_track_name .. " " .. subtype):lower(),
+                            ("d " .. base_track_name .. subtype):lower()
+                        }
+                        
+                        -- Add any custom track name variations from config
+                        if matched_config and matched_config.track_name_variations then
+                            for _, variation in ipairs(matched_config.track_name_variations) do
+                                table.insert(target_variations, variation:lower())
+                                -- Also add variations with the subtype
+                                table.insert(target_variations, (variation .. " " .. subtype):lower())
+                                table.insert(target_variations, (variation .. subtype):lower())
+                                -- If the variation doesn't start with "d" and this is a drums track, add "d " prefix
+                                if variation:sub(1, 1):lower() ~= "d" and 
+                                   (matched_config.parent_group == "Drums" or matched_config.name == "Drums") then
+                                    table.insert(target_variations, ("d " .. variation):lower())
+                                    table.insert(target_variations, ("d " .. variation .. " " .. subtype):lower())
+                                    table.insert(target_variations, ("d " .. variation .. subtype):lower())
+                                end
+                            end
+                        end
+                        
+                        -- Extract base track name without playlist numbers for matching
+                        local track_base = track_name_lower:gsub("%.%d+", "")
+                        
+                        -- Check if this track matches any of our target variations
+                        local variation_match = false
+                        local matched_variation = ""
+                        
+                        -- Normalize track name and target for more reliable matching
+                        -- Remove case sensitivity and handle common spacing variations
+                        local function normalizeTrackName(name)
+                            if not name then return "" end
+                            local normalized = name:lower()
+                                          :gsub("-", " ")  -- Convert dashes to spaces
+                                          :gsub("hi hat", "hihat")  -- Normalize common hihat variations
+                                          :gsub("hi%-hat", "hihat")
+                                          :gsub("hi_hat", "hihat")
+                            return normalized
+                        end
+                        
+                        local track_base_normalized = normalizeTrackName(track_base)
+                        
+                        for _, target in ipairs(target_variations) do
+                            local target_normalized = normalizeTrackName(target)
+                            
+                            if track_base_normalized == target_normalized or
+                               track_base_normalized:match(target_normalized .. "$") or 
+                               track_base_normalized:match("^" .. target_normalized) then
+                                variation_match = true
+                                matched_variation = target
+                                ImportScript.DebugPrint("  ✓ Found subtype match with track: '" .. track_name .. 
+                                                    "' using variation: '" .. target .. "'")
+                break
+            end
+        end
+                        
+                        if variation_match then
+                            ImportScript.DebugPrint("  Found match using variation: '" .. matched_variation .. "'")
+                            best_track = track
+                            best_track_info = track_info
+                            best_score = 100
+                            ImportScript.LogMessage("Found subtype match with track: '" .. track_name .. 
+                                                 "' for subtype: '" .. subtype .. "' using variation: '" .. matched_variation .. "'", "MATCH")
+                            goto return_best_track
+                        end
+                        
+                        -- If we didn't find a specific variation match but we have a subtype match
+                        -- still use this track as a fallback
+                        best_track = track
+                        best_track_info = track_info
+                        best_score = 100
+                        ImportScript.DebugPrint("  Found subtype match with track: '" .. track_name .. 
+                                              "' for subtype: '" .. subtype .. "'")
+                        ImportScript.LogMessage("Found subtype match with track: '" .. track_name .. 
+                                             "' for subtype: '" .. subtype .. "'", "MATCH")
+                        goto return_best_track -- Skip other checks and return this match
+                    end
+                end
+                
+                -- If we get here with detected subtypes but no match,
+                -- we should duplicate a track with similar base characteristics
+                -- if we later find a match with different subtypes
+                should_duplicate_track = true
+            end
+            
+            -- PRIORITY 2: Try exact match (case insensitive)
+            -- Make a more careful check for exact match of base names
+            if string.lower(item_base_name) == string.lower(track_name_lower:gsub("%.%d+", "")) then
+                -- Apply playlist checking logic
+                local track_playlist = track_name_lower:match("%.(%d+)")
+                
+                if playlist_number and track_playlist then
+                    local track_playlist_num = tonumber(track_playlist)
+                    
+                    -- If playlists are different but base names match, use take lanes
+                    if track_playlist_num ~= playlist_number then
+                        ImportScript.DebugPrint("  Same base name with different playlist numbers: track=" .. 
+                            track_playlist_num .. ", item=" .. playlist_number .. ", will use take lanes")
+                        best_track = track
+                        best_track_info = track_info
+                        best_score = 90
+                        should_use_lanes = true
+                        ImportScript.LogMessage("Found track with same base name but different playlist: '" .. 
+                            track_name .. "', will use take lanes", "MATCH")
+                        goto return_best_track
+                    end
+                end
+                
+                -- Exact match (including playlist if both have it, or neither have it)
+                best_track = track
+                best_track_info = track_info
+                best_score = 80
+                ImportScript.DebugPrint("  Found exact base name match with track: '" .. track_name .. "'")
+                ImportScript.LogMessage("Found exact base name match with track: '" .. track_name .. "'", "MATCH")
+                goto return_best_track -- Skip other checks and return this match
+            end
+            
+            -- PRIORITY 3: Try pattern match as last resort
+            if best_score < 80 then
+                local matches, pattern = PatternMatching.MatchesAnyPattern(item_name, {track_name})
+                if matches then
+                    -- Found a pattern match
+                    best_track = track
+                    best_track_info = track_info
+                    best_score = 70
+                    ImportScript.DebugPrint("  Found pattern match with track: '" .. track_name .. "'")
+                    ImportScript.LogMessage("Found pattern match with track: '" .. track_name .. "'", "MATCH")
+                    -- Don't break here, continue checking for better matches
+                end
+            end
+        end
+    end
+    
+    ::return_best_track::
+    -- If a good match was found, return it along with the lane flags
+    if best_track then
+        return best_track, best_track_info, best_score, should_use_lanes
+    end
+    
+    -- If no match found, create a new track with appropriate subtype if detected
+    -- Generate track name based on categories and detected subtypes
+    local new_track_name = ""
+    
+    -- Use the destination_track from the config as base instead of the matched_group_name
+    local base_track_name = ""
+    if matched_config and matched_config.destination_track then
+        base_track_name = matched_config.destination_track
+    else
+        base_track_name = matched_group_name
+    end
+    
+    -- If we detected a subtype, append it to the base name
+    if #detected_subtypes > 0 then
+        local subtype = detected_subtypes[1]
+        ImportScript.DebugPrint("  Creating track with subtype: '" .. subtype .. "'")
+        
+        -- If the parent track name typically starts with "D", make sure our new track does too
+        local d_prefix = ""
+        if group_parent_track then
+            local _, parent_track_name = reaper.GetTrackName(group_parent_track)
+            if parent_track_name:sub(1, 1) == "D" and base_track_name:sub(1, 1) ~= "D" then
+                d_prefix = "D "
+            end
+        end
+        
+        -- Form the track name with the subtype
+        new_track_name = d_prefix .. base_track_name .. " " .. subtype
+        
+        -- Add a unique identifier if needed to ensure separation between subtypes
+        -- This is important for instruments like toms where each subtype must go to a specific track
+        if matched_config and matched_config.force_separate_subtype_tracks then
+            new_track_name = new_track_name .. "_" .. subtype
+        end
+        
+        ImportScript.DebugPrint("  Creating track with name: '" .. new_track_name .. "'")
+        ImportScript.LogMessage("Creating track for subtype '" .. subtype .. "': '" .. new_track_name .. "'", "CREATE")
+    else
+        -- No subtype - just use the base name
+        new_track_name = base_track_name
+        ImportScript.DebugPrint("  Creating track with base name: '" .. new_track_name .. "'")
+        ImportScript.LogMessage("Creating track with base name: '" .. new_track_name .. "'", "CREATE")
+    end
+    
+    -- Create the track
+    -- 1. Find the appropriate parent track first
+    local parent_track_to_use = group_parent_track
+    
+    -- 2. If we have a subtype with a parent override, use that instead
+    if #detected_subtypes > 0 and subtype_parent_override then
+        -- Try to find the override parent (or create it if needed)
+        local override_parent = TrackConfig.FindTrackByGUIDWithFallback(nil, subtype_parent_override)
+        
+        if override_parent then
+            local _, override_parent_name = reaper.GetTrackName(override_parent)
+            ImportScript.DebugPrint("  Using subtype parent override: '" .. override_parent_name .. "'")
+            ImportScript.LogMessage("Using parent override '" .. override_parent_name .. "' for new track", "PARENT")
+            parent_track_to_use = override_parent
+        else
+            -- Auto-create the parent track if it doesn't exist
+            ImportScript.DebugPrint("  Parent override track '" .. subtype_parent_override .. "' not found, creating it")
+            ImportScript.LogMessage("Creating missing parent track: '" .. subtype_parent_override .. "'", "CREATE")
+            
+            reaper.InsertTrackAtIndex(reaper.CountTracks(0), true)
+            local new_parent = reaper.GetTrack(0, reaper.CountTracks(0) - 1)
+            
+            if new_parent then
+                -- Set name and make it a folder
+                reaper.GetSetMediaTrackInfo_String(new_parent, "P_NAME", subtype_parent_override, true)
+                reaper.SetMediaTrackInfo_Value(new_parent, "I_FOLDERDEPTH", 1)
+                
+                ImportScript.DebugPrint("  Created parent track: '" .. subtype_parent_override .. "'")
+                parent_track_to_use = new_parent
+            end
+            end
+        end
+        
+    -- 3. If we still don't have a parent track, create one using the matched_config
+    if not parent_track_to_use and matched_config and matched_config.parent_track then
+        ImportScript.DebugPrint("  Creating missing parent track: '" .. matched_config.parent_track .. "'")
+        ImportScript.LogMessage("Creating parent track: '" .. matched_config.parent_track .. "'", "CREATE")
+        
+        reaper.InsertTrackAtIndex(reaper.CountTracks(0), true)
+        local new_parent = reaper.GetTrack(0, reaper.CountTracks(0) - 1)
+        
+        if new_parent then
+            -- Set name and make it a folder
+            reaper.GetSetMediaTrackInfo_String(new_parent, "P_NAME", matched_config.parent_track, true)
+            reaper.SetMediaTrackInfo_Value(new_parent, "I_FOLDERDEPTH", 1)
+            
+            ImportScript.DebugPrint("  Created parent track: '" .. matched_config.parent_track .. "'")
+            parent_track_to_use = new_parent
+        end
+    end
+    
+    -- 4. Now create the actual track at the right position
+    -- Create a new track as a child of the parent
+    local new_track = nil
+    
+    if parent_track_to_use then
+        -- Find the end of the folder to insert at
+        local folder_index = reaper.GetMediaTrackInfo_Value(parent_track_to_use, "IP_TRACKNUMBER") - 1
+        local folder_depth = 1  -- Start at depth 1 (inside folder)
+        local folder_end_index = -1
+        
+        -- Find the end of the folder
+        for i = folder_index + 1, reaper.CountTracks(0) - 1 do
+            local track = reaper.GetTrack(0, i)
+            local depth_change = reaper.GetMediaTrackInfo_Value(track, "I_FOLDERDEPTH")
+            
+            folder_depth = folder_depth + depth_change
+            
+            if folder_depth <= 0 then
+                folder_end_index = i
+                break
+            end
+        end
+        
+        -- If no folder end found, assume it's at the end of the project
+        if folder_end_index == -1 then
+            folder_end_index = reaper.CountTracks(0)
+        end
+        
+        -- Create the new track at the folder end
+        ImportScript.DebugPrint("  Inserting track at folder end index: " .. folder_end_index)
+        reaper.InsertTrackAtIndex(folder_end_index, true)
+        new_track = reaper.GetTrack(0, folder_end_index)
+    else
+        -- No parent, create at the end of the project
+        ImportScript.DebugPrint("  No parent found, creating track at end of project")
+        reaper.InsertTrackAtIndex(reaper.CountTracks(0), true)
+        new_track = reaper.GetTrack(0, reaper.CountTracks(0) - 1)
+    end
+    
+    -- 5. Configure the track
+        if new_track then
+        -- Set the track name
+        reaper.GetSetMediaTrackInfo_String(new_track, "P_NAME", new_track_name, true)
+        
+        -- Configure it as a child track if we have a parent
+        if parent_track_to_use then
+            -- Set indentation (depth)
+            local parent_tcp_depth = reaper.GetMediaTrackInfo_Value(parent_track_to_use, "I_TCPDEPTH")
+            reaper.SetMediaTrackInfo_Value(new_track, "I_TCPDEPTH", parent_tcp_depth + 1)
+            
+            -- Not a folder itself
+            reaper.SetMediaTrackInfo_Value(new_track, "I_FOLDERDEPTH", 0)
+        end
+        
+        -- Create the track info record
+        local track_info = {
+                track = new_track,
+                name = new_track_name,
+            items = {},
+            tracked = true
+        }
+        
+        ImportScript.DebugPrint("  ✓ Successfully created track: '" .. new_track_name .. "'")
+        ImportScript.LogMessage("Created track: '" .. new_track_name .. "'", "CREATE")
+        
+        -- Return the new track and info
+        return new_track, track_info, 50, false
+    else
+        ImportScript.DebugPrint("  ✗ Failed to create track")
+        ImportScript.LogMessage("Failed to create track: '" .. new_track_name .. "'", "ERROR")
+    end
+    
+    return nil, nil, 0, false
 end
 
 -- Now, modify the OrganizeSelectedItems function to properly handle destination tracks
@@ -1367,7 +1981,78 @@ function ImportScript.OrganizeSelectedItems()
     local all_items = {}
     local source_tracks = {} -- Keep track of source tracks to check for emptiness later
     
-    -- Store items with their possible matches
+    -- Tom handling - identify tom tracks by counting them to assign numbers if missing
+    local tom_high_found = false
+    local tom_mid_found = false
+    local tom_low_found = false 
+    local tom_floor_found = false
+    local unnumbered_toms = {}
+    
+    -- First pass - identify all tom tracks and look for specific types
+    for i = 0, item_count - 1 do
+        local item = reaper.GetSelectedMediaItem(0, i)
+        local take = reaper.GetActiveTake(item)
+        
+        if take then
+            local _, take_name = reaper.GetSetMediaItemTakeInfo_String(take, "P_NAME", "", false)
+            local take_name_lower = take_name:lower()
+            
+            -- Check if this is a tom
+            if take_name_lower:match("tom") then
+                -- Check for specific tom types
+                if take_name_lower:match("high") or take_name_lower:match("hi ") or take_name_lower:match("top") then
+                    tom_high_found = true
+                elseif take_name_lower:match("mid") or take_name_lower:match("middle") then
+                    tom_mid_found = true
+                elseif take_name_lower:match("low") or take_name_lower:match("bottom") then
+                    tom_low_found = true
+                elseif take_name_lower:match("floor") then
+                    tom_floor_found = true
+                elseif not take_name_lower:match("tom%s*%d") then
+                    -- This is a tom with no clear identifier - save for later processing
+                    table.insert(unnumbered_toms, {
+                        item = item,
+                        take = take,
+                        name = take_name
+                    })
+                end
+            end
+        end
+    end
+    
+    -- If we have unnumbered toms and not all tom types are found, try to map them
+    if #unnumbered_toms > 0 then
+        ImportScript.DebugPrint("Found " .. #unnumbered_toms .. " unnumbered toms, attempting to map them")
+        
+        -- Sort by pitch if we can, otherwise just use default ordering
+        -- For now, we'll use a simple mapping strategy
+        local tom_types = {"high", "mid", "low", "floor"}
+        local tom_statuses = {tom_high_found, tom_mid_found, tom_low_found, tom_floor_found}
+        
+        local idx = 1
+        for _, tom_data in ipairs(unnumbered_toms) do
+            -- Find the next available tom type
+            while idx <= 4 and tom_statuses[idx] do
+                idx = idx + 1
+            end
+            
+            if idx <= 4 then
+                -- Add tag to the name to help with subtype detection
+                local take = tom_data.take
+                local new_name = tom_data.name .. " [" .. tom_types[idx] .. "]"
+                reaper.GetSetMediaItemTakeInfo_String(take, "P_NAME", new_name, true)
+                
+                ImportScript.DebugPrint("Tagged unnumbered tom '" .. tom_data.name .. "' as '" .. new_name .. "'")
+                ImportScript.LogMessage("Automatically tagged tom '" .. tom_data.name .. "' as '" .. tom_types[idx] .. "' type", "TOM")
+                
+                -- Mark this type as used
+                tom_statuses[idx] = true
+                idx = idx + 1
+            end
+        end
+    end
+    
+    -- Now process all items normally
     for i = 0, item_count - 1 do
         local item = reaper.GetSelectedMediaItem(0, i)
         local take = reaper.GetActiveTake(item)
@@ -1384,6 +2069,59 @@ function ImportScript.OrganizeSelectedItems()
             end
             
             ImportScript.DebugPrint("\nCollecting matches for item: '" .. take_name .. "'")
+            
+            -- Special handling for Tom tracks - apply tom number to name before matching
+            local take_name_lower = take_name:lower()
+            local modified_take_name = take_name
+            
+            -- Instead of special tom logic, use the generic subtype pattern matching for all instrument types
+            local matched_subtype = nil
+            local matched_group = nil
+            
+            -- First try to identify which group this item belongs to
+            for name, config in pairs(track_configs) do
+                if config.patterns and #config.patterns > 0 then
+                    local matches, pattern = PatternMatching.MatchesAnyPattern(take_name, config.patterns)
+                    if matches and not PatternMatching.MatchesNegativePattern(take_name, config.negative_patterns or {}) then
+                        matched_group = config
+                        ImportScript.DebugPrint("  ✓ Item matched group: '" .. name .. "' with pattern: '" .. pattern .. "'")
+                        
+                        -- Now check if this group has subtypes
+                        if config.subtypes and #config.subtypes > 0 and config.subtype_patterns then
+                            ImportScript.DebugPrint("  Checking for subtypes in group: '" .. name .. "'")
+                            
+                            -- Try to match a subtype
+                            for _, subtype in ipairs(config.subtypes) do
+                                if config.subtype_patterns[subtype] then
+                                    local subtype_patterns = config.subtype_patterns[subtype]
+                                    
+                                    for _, pattern in ipairs(subtype_patterns) do
+                                        if take_name_lower:match(pattern:lower()) then
+                                            matched_subtype = subtype
+                                            ImportScript.DebugPrint("  ✓ Item matched subtype: '" .. subtype .. "' with pattern: '" .. pattern .. "'")
+                                            
+                                            -- Tag the item with the subtype for later use
+                                            modified_take_name = take_name .. " [" .. name .. "-" .. subtype .. "]"
+                                            ImportScript.LogMessage("Enhanced item '" .. take_name .. "' with subtype tag: '" .. modified_take_name .. "'", "SUBTYPE")
+                                            break
+                                        end
+                                    end
+                                    
+                                    if matched_subtype then break end
+                                end
+                            end
+                        end
+                        
+                        break -- Found a matching group, no need to check others
+                    end
+                end
+            end
+            
+            -- Update take name for pattern matching but don't commit to actual take yet
+            take_name = modified_take_name
+            if matched_subtype then
+                ImportScript.LogMessage("Item '" .. take_name .. "' matched subtype: '" .. matched_subtype .. "'", "SUBTYPE")
+            end
             
             -- Find all possible matching track configurations
             local possible_matches = {}
@@ -1470,6 +2208,22 @@ function ImportScript.OrganizeSelectedItems()
     -- Map to store destination tracks for each group
     local group_destination_tracks = {}
     
+    -- Helper function to normalize track names for comparison
+    local function normalizeTrackName(name)
+        if not name then return "" end
+        local normalized = name:lower()
+                        :gsub("-", " ")  -- Convert dashes to spaces
+                        :gsub("hi hat", "hihat")  -- Normalize hihat variations
+                        :gsub("hi%-hat", "hihat")
+                        :gsub("hi_hat", "hihat")
+        return normalized
+    end
+    
+    -- Function to check if two track names match (normalized)
+    local function tracksMatch(name1, name2)
+        return normalizeTrackName(name1) == normalizeTrackName(name2)
+    end
+    
     -- For each group, find all existing destination tracks
     for group_name, group_config in pairs(track_configs) do
         -- Get parent track
@@ -1483,16 +2237,57 @@ function ImportScript.OrganizeSelectedItems()
             local destination_tracks = {}
             local track_count = reaper.CountTracks(0)
             
+            -- Log the parent track we're checking
+            local _, parent_name = reaper.GetTrackName(parent_track)
+            ImportScript.DebugPrint("  Checking for destination tracks under parent: '" .. parent_name .. "' for group: '" .. group_name .. "'")
+            
             for i = 0, track_count - 1 do
                 local track = reaper.GetTrack(0, i)
                 local parent = reaper.GetParentTrack(track)
                 
                 if parent == parent_track then
                     local _, track_name = reaper.GetTrackName(track)
+                    local track_normalized = normalizeTrackName(track_name)
+                    local dest_normalized = ""
+                    
+                    -- Check if this is the destination track or matches any variations
+                    if group_config.destination_track then
+                        dest_normalized = normalizeTrackName(group_config.destination_track)
+                        
+                        -- Check direct match
+                        if track_normalized == dest_normalized then
+                            ImportScript.DebugPrint("  ✓ Found exact destination track match: '" .. track_name .. "' for group: '" .. group_name .. "'")
                     table.insert(destination_tracks, {
                         track = track,
                         name = track_name
                     })
+                        -- Check D prefix common in drum tracks
+                        elseif track_normalized == "d " .. dest_normalized then
+                            ImportScript.DebugPrint("  ✓ Found destination track with D prefix: '" .. track_name .. "' for group: '" .. group_name .. "'")
+                            table.insert(destination_tracks, {
+                                track = track,
+                                name = track_name
+                            })
+                        -- Check name variations if present
+                        elseif group_config.track_name_variations then
+                            for _, variation in ipairs(group_config.track_name_variations) do
+                                if track_normalized == normalizeTrackName(variation) then
+                                    ImportScript.DebugPrint("  ✓ Found destination track via variation: '" .. track_name .. "' matches '" .. variation .. "' for group: '" .. group_name .. "'")
+                                    table.insert(destination_tracks, {
+                                        track = track,
+                                        name = track_name
+                                    })
+                                    break
+                                end
+                            end
+                        end
+                    else
+                        -- If no destination_track specified, use all children
+                        table.insert(destination_tracks, {
+                            track = track,
+                            name = track_name
+                        })
+                    end
                     end
                 end
                 
@@ -1541,6 +2336,31 @@ function ImportScript.OrganizeSelectedItems()
         else
             ImportScript.DebugPrint("  No parent track found")
             ImportScript.LogMessage("No parent track found for config: '" .. best_match.name .. "'", "TRACK")
+            
+            -- Auto-create parent track if it doesn't exist but we have a parent_track name
+            if best_match.config.parent_track and best_match.config.parent_track ~= "" then
+                ImportScript.DebugPrint("  Attempting to auto-create missing parent track: '" .. best_match.config.parent_track .. "'")
+                ImportScript.LogMessage("Auto-creating parent track: '" .. best_match.config.parent_track .. "'", "CREATE")
+                
+                -- Create the parent at the root level
+                reaper.InsertTrackAtIndex(reaper.CountTracks(0), true)
+                local new_parent = reaper.GetTrack(0, reaper.CountTracks(0) - 1)
+                
+                if new_parent then
+                    -- Set the track name
+                    reaper.GetSetMediaTrackInfo_String(new_parent, "P_NAME", best_match.config.parent_track, true)
+                    
+                    -- Make it a folder
+                    reaper.SetMediaTrackInfo_Value(new_parent, "I_FOLDERDEPTH", 1)
+                    
+                    parent_track = new_parent
+                    ImportScript.DebugPrint("  ✓ Successfully created parent track: '" .. best_match.config.parent_track .. "'")
+                    ImportScript.LogMessage("Successfully created parent track: '" .. best_match.config.parent_track .. "' for group: '" .. best_match.name .. "'", "CREATE")
+                else
+                    ImportScript.DebugPrint("  ✗ Failed to create parent track")
+                    ImportScript.LogMessage("Failed to create parent track: '" .. best_match.config.parent_track .. "'", "ERROR")
+                end
+            end
         end
         
         -- Determine destination track name (base name)
@@ -1550,7 +2370,7 @@ function ImportScript.OrganizeSelectedItems()
         local config_tracks = created_tracks[best_match.name] or {}
         
         -- Find the best destination track for this item
-        local destination_track, best_track_info, match_score = FindBestDestinationTrack(
+        local destination_track, best_track_info, match_score, should_use_lanes = FindBestDestinationTrack(
             item_data.name, 
             item_data.categories, 
             config_tracks, 
@@ -1573,6 +2393,7 @@ function ImportScript.OrganizeSelectedItems()
             -- Store the destination track info with the item data for later use
             item_data.destination_track = destination_track
             item_data.best_track_info = best_track_info
+            item_data.should_use_lanes = should_use_lanes
         else
             ImportScript.DebugPrint("  ✗ No destination track available")
             ImportScript.LogMessage("Failed to find or create destination track for '" .. item_data.name .. "'", "ERROR")
@@ -1587,12 +2408,47 @@ function ImportScript.OrganizeSelectedItems()
     ImportScript.DebugPrint("\n--- PHASE 4: MOVING ITEMS ---")
     ImportScript.LogMessage("Phase 4: Moving items to destination tracks", "ORGANIZE")
     
-    -- Now move all items to their destination tracks
+    -- Track if we used take lanes for any items (for comp creation later)
+    local tracks_with_lanes = {}
+    
+    -- Keep a record of destination tracks and how many items they've received
+    local track_item_counts = {}
+    
+    -- First pass: Count how many items are going to each track
+    for _, item_data in ipairs(all_items) do
+        -- Skip items with no matches or no destination track
+        if #item_data.matches == 0 or not item_data.destination_track then
+            goto continue_count
+        end
+        
+        -- Get track GUID for tracking
+        local track_guid = reaper.GetTrackGUID(item_data.destination_track)
+        if not track_guid then
+            track_guid = "unknown_" .. math.random(10000)
+        end
+        
+        -- Initialize count if not exists
+        if not track_item_counts[track_guid] then
+            track_item_counts[track_guid] = {
+                count = 0,
+                track = item_data.destination_track,
+                items = {} -- Store items for this track
+            }
+        end
+        
+        -- Increment count and store the item
+        track_item_counts[track_guid].count = track_item_counts[track_guid].count + 1
+        table.insert(track_item_counts[track_guid].items, item_data)
+        
+        ::continue_count::
+    end
+    
+    -- Now move all items to their destination tracks first WITHOUT creating lanes
     for _, item_data in ipairs(all_items) do
         -- Skip items with no matches or no destination track
         if #item_data.matches == 0 or not item_data.destination_track then
             ImportScript.DebugPrint("  Skipping item without destination track: '" .. item_data.name .. "'")
-            goto continue_phase4
+            goto continue_phase4_move
         end
         
         -- Get the best match (highest score)
@@ -1601,6 +2457,25 @@ function ImportScript.OrganizeSelectedItems()
         -- Determine destination track name (base name)
         local base_track_name = best_match.config.destination_track or best_match.name
         
+        -- Get destination track info
+        local _, dest_track_name = reaper.GetTrackName(item_data.destination_track)
+        ImportScript.DebugPrint("  Destination track is: '" .. dest_track_name .. "'")
+        
+        -- Get track GUID for tracking
+        local track_guid = reaper.GetTrackGUID(item_data.destination_track)
+        if not track_guid then
+            track_guid = "unknown_" .. math.random(10000)
+        end
+        
+        -- Check if this is a multi-item track (multiple items going to the same track)
+        local should_use_lanes_auto = false
+        if track_item_counts[track_guid] and track_item_counts[track_guid].count > 1 then
+            should_use_lanes_auto = true
+            item_data.should_use_lanes_auto = true
+            ImportScript.DebugPrint("  Track '" .. dest_track_name .. "' will receive " .. 
+                track_item_counts[track_guid].count .. " items, using take lanes")
+        end
+        
         -- Move the item to the destination track
         ImportScript.DebugPrint("  Moving item '" .. item_data.name .. "' to track: '" .. item_data.best_track_info.name .. "'")
         
@@ -1608,10 +2483,6 @@ function ImportScript.OrganizeSelectedItems()
         local current_track = reaper.GetMediaItemTrack(item_data.item)
         local _, current_track_name = reaper.GetTrackName(current_track)
         ImportScript.DebugPrint("  Item is currently on track: '" .. current_track_name .. "'")
-        
-        -- Get destination track info
-        local _, dest_track_name = reaper.GetTrackName(item_data.destination_track)
-        ImportScript.DebugPrint("  Destination track is: '" .. dest_track_name .. "'")
         
         -- Directly move the item
         if reaper.MoveMediaItemToTrack(item_data.item, item_data.destination_track) then
@@ -1641,6 +2512,13 @@ function ImportScript.OrganizeSelectedItems()
                 ImportScript.LogMessage("Renamed item to '" .. item_name_to_use .. "'", "RENAME")
             end
             
+            -- Store info for lane processing in next step
+            local use_lanes = item_data.should_use_lanes or should_use_lanes_auto
+            if use_lanes then
+                -- Track this for later lane processing
+                tracks_with_lanes[track_guid] = item_data.destination_track
+            end
+            
             items_organized = items_organized + 1
             ImportScript.LogMessage("Moved item '" .. item_data.name .. "' to track '" .. item_data.best_track_info.name .. "'", "MOVE")
         else
@@ -1649,7 +2527,251 @@ function ImportScript.OrganizeSelectedItems()
             items_skipped = items_skipped + 1
         end
         
-        ::continue_phase4::
+        ::continue_phase4_move::
+    end
+    
+    -- PHASE 4B: Now assign items to lanes (as a separate step)
+    ImportScript.DebugPrint("\n--- PHASE 4B: ASSIGNING ITEMS TO LANES ---")
+    ImportScript.LogMessage("Phase 4B: Assigning items to take lanes", "ORGANIZE")
+    
+    -- Process each track that needs lanes
+    for guid, track in pairs(tracks_with_lanes) do
+        if track_item_counts[guid] and track_item_counts[guid].count > 1 then
+            local _, track_name = reaper.GetTrackName(track)
+            ImportScript.LogMessage("Assigning " .. track_item_counts[guid].count .. " items to lanes on track '" .. track_name .. "'", "LANES")
+            
+            -- First, make sure no items are selected
+            reaper.SelectAllMediaItems(0, false)
+            
+            -- Unload all current items from lanes if any existed previously
+            -- Select all items on this track
+            for i = 0, reaper.CountTrackMediaItems(track) - 1 do
+                local item = reaper.GetTrackMediaItem(track, i)
+                reaper.SetMediaItemSelected(item, true)
+            end
+            
+            -- Move all selected items to the "main" lane (action 42788)
+            ImportScript.LogMessage("Moving all items to main lane first", "LANES")
+            reaper.Main_OnCommand(42788, 0) -- Move selected items to main lane
+            reaper.SelectAllMediaItems(0, false) -- Deselect all
+            reaper.UpdateArrange() -- Give REAPER a moment
+            
+            -- Now process each item one at a time
+            for i, item_data in ipairs(track_item_counts[guid].items) do
+                if i > 1 then -- First item stays in main lane
+                    -- Select just this item
+                    reaper.SelectAllMediaItems(0, false) -- Deselect all first
+                    reaper.SetMediaItemSelected(item_data.item, true)
+                    
+                    -- Create a new take lane for this item
+                    ImportScript.LogMessage("Moving item '" .. item_data.name .. "' to lane " .. i, "LANES")
+                    reaper.Main_OnCommand(42787, 0) -- Move selected items to new take lane
+                    reaper.UpdateArrange() -- Give REAPER a moment
+                else
+                    ImportScript.LogMessage("Keeping item '" .. item_data.name .. "' in main lane", "LANES")
+                end
+            end
+            
+            ImportScript.LogMessage("Completed lane assignments for track '" .. track_name .. "'", "LANES")
+        end
+    end
+    
+    -- PHASE 4C: Process stereo pairs
+    ImportScript.DebugPrint("\n--- PHASE 4C: PROCESSING STEREO PAIRS ---")
+    ImportScript.LogMessage("Phase 4C: Processing stereo pairs", "ORGANIZE")
+    
+    -- Track which items are part of stereo pairs
+    local processed_stereo_items = {}
+    local stereo_pairs_created = 0
+    
+    -- Function to check if an item name matches a stereo pattern
+    local function matchesStereoPattern(name, patterns)
+        name = name:lower()
+        for _, pattern in ipairs(patterns) do
+            if name:match(pattern:lower()) then
+                return true
+            end
+        end
+        return false
+    end
+    
+    -- Group items by their destination tracks
+    local track_items = {}
+    for _, item_data in ipairs(all_items) do
+        -- Skip items with no matches or no destination track
+        if #item_data.matches == 0 or not item_data.destination_track then
+            goto continue_stereo_check
+        end
+        
+        -- Skip already processed items
+        if processed_stereo_items[item_data.item] then
+            goto continue_stereo_check
+        end
+        
+        -- Get track GUID for tracking
+        local track_guid = reaper.GetTrackGUID(item_data.destination_track)
+        if not track_guid then
+            track_guid = "unknown_" .. math.random(10000)
+        end
+        
+        -- Initialize array if not exists
+        if not track_items[track_guid] then
+            track_items[track_guid] = {
+                track = item_data.destination_track,
+                items = {}
+            }
+        end
+        
+        -- Add item to this track's list
+        table.insert(track_items[track_guid].items, item_data)
+        
+        ::continue_stereo_check::
+    end
+    
+    -- Now check each track for potential stereo pairs
+    for track_guid, data in pairs(track_items) do
+        local track = data.track
+        local items = data.items
+        
+        -- Skip if only one item
+        if #items <= 1 then
+            goto continue_track_stereo
+        end
+        
+        -- Get the configuration for the first item to check if this is a stereo pair candidate
+        local item_data = items[1]
+        if #item_data.matches == 0 then
+            goto continue_track_stereo
+        end
+        
+        local best_match = item_data.matches[1]
+        local matched_config = best_match.config
+        
+        -- Skip if this config doesn't have stereo pair mode enabled
+        if not matched_config.stereo_pair_mode or not matched_config.stereo_pair_patterns then
+            goto continue_track_stereo
+        end
+        
+        -- We have a stereo pair candidate track
+        local _, track_name = reaper.GetTrackName(track)
+        ImportScript.LogMessage("Checking for stereo pairs on track: '" .. track_name .. "'", "STEREO")
+        
+        -- Look for pairs among items on this track
+        local stereo_pairs = {}
+        
+        -- First identify items by their stereo side (left/right) or position (hat/ride)
+        for i, item_data in ipairs(items) do
+            local side = nil
+            
+            -- Check which side this item belongs to
+            for side_name, patterns in pairs(matched_config.stereo_pair_patterns) do
+                if matchesStereoPattern(item_data.name, patterns) then
+                    side = side_name
+                    ImportScript.DebugPrint("  Item '" .. item_data.name .. "' matches stereo pattern: " .. side_name)
+                    break
+                end
+            end
+            
+            -- If we identified a side, add it to potential pairs
+            if side then
+                if not stereo_pairs[side] then
+                    stereo_pairs[side] = {}
+                end
+                table.insert(stereo_pairs[side], item_data)
+            end
+        end
+        
+        -- Now check for valid pairs
+        for side1, items1 in pairs(stereo_pairs) do
+            for side2, items2 in pairs(stereo_pairs) do
+                -- Skip self-comparison
+                if side1 == side2 then
+                    goto continue_pair_check
+                end
+                
+                -- We have a potential pair: side1 + side2
+                ImportScript.DebugPrint("  Potential stereo pair found: " .. side1 .. " + " .. side2)
+                
+                -- We'll use the first item from each side to form a pair
+                local item1 = items1[1]
+                local item2 = items2[1]
+                
+                -- Check if items are at same position (important for stereo pairing)
+                if math.abs(reaper.GetMediaItemInfo_Value(item1.item, "D_POSITION") - 
+                            reaper.GetMediaItemInfo_Value(item2.item, "D_POSITION")) > 0.001 then
+                    ImportScript.DebugPrint("  ✗ Items not at same position, skipping pair")
+                    goto continue_pair_check
+                end
+                
+                -- Valid pair found
+                ImportScript.LogMessage("Found stereo pair: '" .. item1.name .. "' + '" .. item2.name .. "'", "STEREO")
+                
+                -- Select just these two items
+                reaper.SelectAllMediaItems(0, false)
+                reaper.SetMediaItemSelected(item1.item, true)
+                reaper.SetMediaItemSelected(item2.item, true)
+                
+                -- Run the implode to stereo command
+                ImportScript.LogMessage("Imploding items into stereo", "STEREO")
+                reaper.Main_OnCommand(reaper.NamedCommandLookup("_RS8edc98fd9236b06318e140bf38f9588b552c43dc"), 0)
+                
+                -- Mark these items as processed
+                processed_stereo_items[item1.item] = true
+                processed_stereo_items[item2.item] = true
+                
+                stereo_pairs_created = stereo_pairs_created + 1
+                
+                ::continue_pair_check::
+            end
+        end
+        
+        ::continue_track_stereo::
+    end
+    
+    if stereo_pairs_created > 0 then
+        ImportScript.LogMessage("Created " .. stereo_pairs_created .. " stereo pairs", "SUMMARY")
+    end
+    
+    -- PHASE 5: Create comps for tracks with take lanes
+    if next(tracks_with_lanes) then
+        ImportScript.DebugPrint("\n--- PHASE 5: CREATING COMPS FOR LANES ---")
+        ImportScript.LogMessage("Phase 5: Creating comps for tracks with take lanes", "ORGANIZE")
+        
+        -- Process each track that has take lanes
+        local comp_count = 0
+        for guid, track in pairs(tracks_with_lanes) do
+            if track_item_counts[guid] and track_item_counts[guid].count > 1 then
+                local _, track_name = reaper.GetTrackName(track)
+                ImportScript.LogMessage("Creating comp for track: '" .. track_name .. "' with " .. track_item_counts[guid].count .. " items", "COMP")
+                
+                -- IMPORTANT: First deselect all items
+                reaper.SelectAllMediaItems(0, false)
+                
+                -- IMPORTANT: Select the track itself, not its items
+                -- Deselect all tracks first
+                local num_tracks = reaper.CountTracks(0)
+                for i = 0, num_tracks - 1 do
+                    local cur_track = reaper.GetTrack(0, i)
+                    reaper.SetTrackSelected(cur_track, false)
+                end
+                
+                -- Select only our target track
+                reaper.SetTrackSelected(track, true)
+                ImportScript.DebugPrint("  Selected track: '" .. track_name .. "' for comp creation")
+                
+                -- Wait a moment for UI to settle
+                reaper.UpdateArrange()
+                
+                -- Execute action to create comp (ID: 42798) - this requires track selection, not item selection
+                ImportScript.LogMessage("Running action 42798 to create comp for track: '" .. track_name .. "'", "COMP")
+                reaper.Main_OnCommand(42798, 0) -- Auto-create new comp from selected items
+                
+                comp_count = comp_count + 1
+                ImportScript.DebugPrint("  Created comp for track: '" .. track_name .. "'")
+            end
+        end
+        
+        ImportScript.LogMessage("Created " .. comp_count .. " comps for tracks with take lanes", "SUMMARY")
     end
     
     -- Handle unmatched items and items with track creation failures - move them to NOT SORTED folder
@@ -1659,14 +2781,14 @@ function ImportScript.OrganizeSelectedItems()
         ImportScript.LogMessage("Processing " .. (unmatched_items + track_creation_failed_items) .. " items to move to NOT SORTED", "ORGANIZE")
         
         -- Find or create NOT SORTED folder
-        local not_sorted_track = nil
+        local not_sorted_folder = nil
         local track_count = reaper.CountTracks(0)
         for i = 0, track_count - 1 do
             local track = reaper.GetTrack(0, i)
             local _, track_name = reaper.GetTrackName(track)
             
             if track_name == "NOT SORTED" then
-                not_sorted_track = track
+                not_sorted_folder = track
                 ImportScript.DebugPrint("  Found existing NOT SORTED folder")
                 ImportScript.LogMessage("Using existing NOT SORTED folder", "TRACK")
                 break
@@ -1674,20 +2796,20 @@ function ImportScript.OrganizeSelectedItems()
         end
         
         -- Create NOT SORTED folder if it doesn't exist
-        if not not_sorted_track then
+        if not not_sorted_folder then
             ImportScript.DebugPrint("  Creating NOT SORTED folder")
             ImportScript.LogMessage("Creating NOT SORTED folder", "CREATE")
             
             -- Create the track
             reaper.InsertTrackAtIndex(track_count, true)
-            not_sorted_track = reaper.GetTrack(0, track_count)
+            not_sorted_folder = reaper.GetTrack(0, track_count)
             
-            if not_sorted_track then
+            if not_sorted_folder then
                 -- Set the track name
-                reaper.GetSetMediaTrackInfo_String(not_sorted_track, "P_NAME", "NOT SORTED", true)
+                reaper.GetSetMediaTrackInfo_String(not_sorted_folder, "P_NAME", "NOT SORTED", true)
                 
                 -- Set it as a folder
-                reaper.SetMediaTrackInfo_Value(not_sorted_track, "I_FOLDERDEPTH", 1)
+                reaper.SetMediaTrackInfo_Value(not_sorted_folder, "I_FOLDERDEPTH", 1)
                 
                 ImportScript.DebugPrint("    ✓ Created NOT SORTED folder")
                 ImportScript.LogMessage("Successfully created NOT SORTED folder", "CREATE")
@@ -1697,15 +2819,77 @@ function ImportScript.OrganizeSelectedItems()
             end
         end
         
-        -- Move unmatched items and items with track creation failures to NOT SORTED folder
-        if not_sorted_track then
+        -- Move unmatched items and items with track creation failures to individual tracks under NOT SORTED folder
+        if not_sorted_folder then
+            -- Make sure the NOT SORTED track is set as a folder
+            reaper.SetMediaTrackInfo_Value(not_sorted_folder, "I_FOLDERDEPTH", 1)
+            
+            -- Find the folder end using the same approach as above
+            local folder_idx = reaper.GetMediaTrackInfo_Value(not_sorted_folder, "IP_TRACKNUMBER") - 1
+            local folder_depth = 1  -- Start at depth 1 (inside folder)
+            local folder_end_idx = -1
+            
+            -- Find the end of the folder
+            for i = folder_idx + 1, reaper.CountTracks(0) - 1 do
+                local track = reaper.GetTrack(0, i)
+                local depth_change = reaper.GetMediaTrackInfo_Value(track, "I_FOLDERDEPTH")
+                
+                folder_depth = folder_depth + depth_change
+                
+                if folder_depth <= 0 then
+                    folder_end_idx = i
+                    break
+                end
+            end
+            
+            -- If no folder end found, assume it's at the end of the project
+            if folder_end_idx == -1 then
+                folder_end_idx = reaper.CountTracks(0)
+            end
+            
+            -- Current insertion point starts at the folder end
+            local insert_idx = folder_end_idx
+            
             for _, item_data in ipairs(all_items) do
                 if #item_data.matches == 0 or not item_data.destination_track then
-                    ImportScript.DebugPrint("  Moving item to NOT SORTED folder: '" .. item_data.name .. "'")
-                reaper.MoveMediaItemToTrack(item_data.item, not_sorted_track)
+                    local take = reaper.GetActiveTake(item_data.item)
+                    local take_name = take and reaper.GetTakeName(take) or "Unknown Item"
+                    
+                    ImportScript.DebugPrint("  Creating child track for unmatched item: '" .. take_name .. "'")
+                    
+                    -- Create a new track at the current insertion point 
+                    -- (inserting at folder_end_idx pushes the existing end track forward)
+                    reaper.InsertTrackAtIndex(insert_idx, true)
+                    local child_track = reaper.GetTrack(0, insert_idx)
+                    
+                    if child_track then
+                        -- Set track name to take name for easy identification
+                        reaper.GetSetMediaTrackInfo_String(child_track, "P_NAME", take_name, true)
+                        
+                        -- Configure it as a child track (indentation)
+                        local parent_tcp_depth = reaper.GetMediaTrackInfo_Value(not_sorted_folder, "I_TCPDEPTH")
+                        reaper.SetMediaTrackInfo_Value(child_track, "I_TCPDEPTH", parent_tcp_depth + 1)
+                        reaper.SetMediaTrackInfo_Value(child_track, "I_FOLDERDEPTH", 0)  -- Regular track, not a folder
+                        
+                        -- Move item to this track
+                        reaper.MoveMediaItemToTrack(item_data.item, child_track)
+                        
                 not_sorted_count = not_sorted_count + 1
-                    ImportScript.LogMessage("Moved item '" .. item_data.name .. "' to NOT SORTED folder", "MOVE")
+                        
+                        -- Each time we insert a track, folder_end_idx gets pushed forward
+                        insert_idx = insert_idx + 1
+                        folder_end_idx = folder_end_idx + 1
+                        
+                        ImportScript.LogMessage("Created track for unmatched item '" .. take_name .. "' under NOT SORTED folder", "MOVE")
+                    else
+                        ImportScript.LogMessage("Failed to create track for unmatched item '" .. take_name .. "'", "ERROR")
+                    end
                 end
+            end
+            
+            -- Make sure the NOT SORTED folder is still a folder after adding all children
+            if not_sorted_count > 0 then
+                reaper.SetMediaTrackInfo_Value(not_sorted_folder, "I_FOLDERDEPTH", 1) 
             end
         end
     end
